@@ -114,13 +114,17 @@ _NOVATION_HDR: Tuple[int, ...] = (0x00, 0x20, 0x29, 0x02)
 _LP_MK3_FAMILY = (19, 1)
 _LP_LPX_FAMILY = (3, 1)
 
-# MIDI port name fragments for auto-detection
+# MIDI port name fragments for auto-detection.
+# More-specific patterns are listed before the MK1 catch-all so that
+# "Launchpad MK2 0", "Launchpad X 0", etc. are matched correctly even when
+# Windows appends a trailing port index like " 0".
 _PORT_PATTERNS: Dict[str, List[str]] = {
-    HardwareModel.MK1: ["launchpad mini", "launchpad s", "launchpad mk1",
-                        "launchpad  "],      # bare "Launchpad" with space
     HardwareModel.MK2: ["launchpad mk2"],
     HardwareModel.MK3: ["launchpad mini mk3", "launchpad mini mk 3"],
     HardwareModel.LPX: ["launchpad x"],
+    # MK1 / Mini / S — bare "launchpad" also catches "Launchpad 0" style names
+    HardwareModel.MK1: ["launchpad mini", "launchpad s", "launchpad mk1",
+                        "launchpad"],
 }
 
 
@@ -946,7 +950,7 @@ def _run_demo() -> None:
     Press Ctrl+C to stop.
     """
     print("Connecting to Launchpad...")
-    lp = LaunchpadWrapper.connect()
+    lp = LaunchpadWrapper.connect(input_port="Launchpad 0")
     print(f"Connected: {lp.model}")
     lp.clear()
 
