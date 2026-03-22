@@ -1,3 +1,36 @@
+"""
+DeviceControllerStripServer.py — Background-thread server for smooth parameter animation.
+
+Runs as a ``threading.Thread`` paired with a ``DeviceControllerStripProxy`` that
+forwards method calls from the main Ableton thread via a ``queue.Queue``.
+
+Architecture
+------------
+Main thread  →  ``DeviceControllerStripProxy``  →  request_queue  →  this class
+             ←  response_queue  ←  (return values only)
+
+The server's ``run()`` loop fires every ~5 ms (``ROUNDTRIP_TARGET / 10``).
+Each iteration:
+1. Drains pending method calls from the request queue.
+2. If a stepless animation is in progress, advances the parameter by one step
+   proportional to the button press velocity.
+3. Processes the ``_parameter_stack`` — parameters that were swapped out before
+   reaching their target are stored here and continued when the strip reconnects.
+
+Time-Dependent Control (TDC)
+-----------------------------
+When ``Settings.ENABLE_TDC`` is ``True``, the time a button is held down maps to
+a velocity via ``_calc_velocity()``.  ``_timed_step`` counts through
+``Settings.TDC_MAP`` to animate a ``ColorSteps`` indicator while the button is held,
+giving visual feedback of the impending change magnitude.
+
+Slider mode constants (same values as DeviceControllerStrip):
+    SLIDER_MODE_OFF (0), SLIDER_MODE_TOGGLE (1), SLIDER_MODE_SLIDER (2),
+    SLIDER_MODE_PRECISION_SLIDER (3), SLIDER_MODE_SMALL_ENUM (4), SLIDER_MODE_BIG_ENUM (5).
+
+ROUNDTRIP_TARGET (float): Target loop period in seconds (0.05 s = 50 ms = 20 Hz).
+"""
+
 import threading
 import traceback
 
@@ -6,13 +39,14 @@ from .Settings import Settings
 import time
 from .Log import log
 
+# Slider display mode constants (mirrored from DeviceControllerStrip)
 SLIDER_MODE_OFF = 0
 SLIDER_MODE_TOGGLE = 1
 SLIDER_MODE_SLIDER = 2
 SLIDER_MODE_PRECISION_SLIDER = 3
 SLIDER_MODE_SMALL_ENUM = 4
 SLIDER_MODE_BIG_ENUM = 5
-ROUNDTRIP_TARGET = 0.05
+ROUNDTRIP_TARGET = 0.05  # Target loop period: 50 ms
 
 non_returns = ["set_precision_mode", "set_stepless_mode", "shutdown", "update",
                "reset_if_no_parameter", "_button_value", "connect_to",
@@ -22,8 +56,56 @@ returning = ["set_enabled", "param_name", "param_value", "__ne__"]
 
 
 class DeviceControllerStripServer(ButtonSliderElement, threading.Thread):
-    def __init__(self, buttons, control_surface, column, request_queue,
-        response_queue, parent=None):
+	"""
+	Background-thread device parameter controller with smooth animation support.
+
+	Inherits both ``ButtonSliderElement`` (parameter binding and LED display) and
+	``threading.Thread`` (background loop).  Communicates with the main thread
+	exclusively through ``_request_queue`` (inbound calls) and ``_response_queue``
+	(return values).
+
+	Attributes:
+		_control_surface (Launchpad): Owning control surface.
+		_column (int): Column index (0-7).
+		_request_queue (Queue): Inbound method-call messages from the proxy.
+		_response_queue (Queue): Outbound return-value messages to the proxy.
+		_parent (DeviceControllerComponent | None): Parent for OSD updates.
+		_num_buttons (int): Number of buttons in column (8).
+		_value_map (tuple[float]): Normalised thresholds per button row.
+		_last_value_map_index (int): Last computed lit-button index; used for update
+		    optimisation (avoids redundant LED writes).
+		_precision_mode (bool): True when precision nudge mode active.
+		_stepless_mode (bool): True when smooth animation mode active.
+		_enabled (bool): Whether button input is processed.
+		_update_primed (bool): Forces an update on the next loop iteration.
+		_parameter_stack (dict): ``{live_ptr: param_entry}`` for interrupted animations.
+		_current_value (float | None): Last-read parameter value.
+		_last_value (float | None): Value at start of current animation step.
+		_last_sent_value (int): Last MIDI velocity processed.
+		_target_value (float | None): Desired final parameter value.
+		_current_velocity (float): Current animation speed factor.
+		roundtrip_target (float): Target loop period in seconds (0.05).
+		roundtrip_start / roundtrip_end / roundtrip_time (float): Loop timing.
+		current_token (int): Request token from the latest proxy call.
+		_timed_mode (bool): Whether TDC (time-dependent control) is enabled.
+		_timed_start (float): Timestamp when a button was pressed (TDC).
+		_timed_step (int): Current TDC colour-step index (0-9).
+		_timed_step_size (float): Duration per TDC step in seconds.
+		_last_pressed_index (int): Button index being held for TDC.
+		_primed_target_value (float | None): Target stored while button is held (TDC).
+	"""
+
+	def __init__(self, buttons, control_surface, column, request_queue,
+		response_queue, parent=None):
+		"""
+		Args:
+			buttons (tuple[ButtonElement]): 8 buttons in this column.
+			control_surface (Launchpad): Owning control surface.
+			column (int): Column index (0-7).
+			request_queue (Queue): Queue for inbound proxy calls.
+			response_queue (Queue): Queue for outbound return values.
+			parent (DeviceControllerComponent | None): Parent for OSD callbacks.
+		"""
         ButtonSliderElement.__init__(self, buttons)
         self._control_surface = control_surface
         self._column = column

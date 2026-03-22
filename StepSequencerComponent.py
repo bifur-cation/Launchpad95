@@ -1,3 +1,28 @@
+"""
+StepSequencerComponent.py — Drum step sequencer for Launchpad95.
+
+Turns the 8×8 pad matrix into a 2-track drum/note step sequencer supporting
+normal single-note mode and multi-note mode.  Sub-components handle different
+aspects of the UI:
+
+- ``NoteEditorComponent``  — Renders the 8×8 step grid and handles note toggling,
+  velocity editing, metronome indicator, and playhead display.
+- ``NoteSelectorComponent`` — Controls which pitch (drum pad note) is being edited;
+  shows a 16-note offset grid on the side buttons.
+- ``LoopSelectorComponent`` — Controls loop start/end via a row of 8 block buttons;
+  shows playing position.
+- ``TrackControllerComponent`` — Arm/mute/solo and track/scene navigation.
+- ``ScaleComponent`` — Scale editor submode (``STEPSEQ_MODE_SCALE_EDIT``).
+
+Modes:
+    STEPSEQ_MODE_NORMAL (1)    — Standard single-note drum step editing.
+    STEPSEQ_MODE_MULTINOTE (2) — Multi-note editing across 8 notes simultaneously.
+    STEPSEQ_MODE_SCALE_EDIT (10) — Scale/key editor overlay.
+
+Quantization options (``QUANTIZATION_MAP``):
+    1/4, 1/8, 1/16, 1/32 — Controls step resolution.
+"""
+
 import Live
 
 from .LoopSelectorComponent import LoopSelectorComponent

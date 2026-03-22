@@ -1,10 +1,48 @@
+"""
+LoopSelectorComponent.py — Loop region selector for the drum step sequencer.
+
+Provides a row of 8 buttons (typically one row of the matrix) that represent
+contiguous blocks of the clip loop.  Each button corresponds to a fixed number
+of sequencer steps (``_blocksize``).
+
+Features:
+- **Playhead** — The block currently playing is shown in a brighter colour.
+- **Selected block** — The block currently being edited is highlighted distinctly.
+- **Loop region** — Blocks within the loop range are lit; blocks outside are dim.
+- **Loop resize** — Press and hold a start block then press an end block to set
+  the loop region.  Press a single block to jump to it.
+- **Linked block size** — Matches the quantization setting of the parent sequencer
+  so 1/8 note quantization yields 8 steps per block, etc.
+
+STEPSEQ_MODE_MULTINOTE (int): Multi-note mode constant; determines button display.
+"""
+
 import time
 
 from _Framework.ButtonElement import ButtonElement
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 
 STEPSEQ_MODE_MULTINOTE = 2
+
 class LoopSelectorComponent(ControlSurfaceComponent):
+    """
+    Loop block selector for the step sequencer.
+
+    Attributes:
+        _control_surface (Launchpad): Owning control surface.
+        _step_sequencer: Parent ``StepSequencerComponent`` reference.
+        _clip (Live.Clip.Clip | None): Clip being played/edited.
+        _notes (list | None): Cached note list.
+        _playhead (int | None): Current playing step index.
+        _loop_end (int): End step of the current loop region.
+        _loop_start (int): Start step of the current loop region.
+        _blocksize (int): Number of notes (steps) represented per button.
+        _block (int): Currently selected/displayed block index.
+        _force (bool): Forces full refresh on next update.
+        _last_button_idx (int): Index of last pressed button (for range selection).
+        _last_button_time (float): Timestamp of last button press.
+        _loop_point1 / _loop_point2 (int): Start/end block indices for drag-resize.
+    """
 
     def __init__(self, step_sequencer, buttons, control_surface):
         ControlSurfaceComponent.__init__(self)

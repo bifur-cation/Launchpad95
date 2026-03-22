@@ -1,3 +1,22 @@
+"""
+TrackControllerComponent.py — Single-track controller for the Instrument mode overlay.
+
+Provides a focused set of actions on the currently selected (or locked) track:
+
+- **Track navigation** — ``prev_track`` / ``next_track`` buttons step through visible tracks.
+- **Scene navigation** — ``prev_scene`` / ``next_scene`` buttons step through scenes.
+- **Clip fire/stop** — ``start_stop`` button fires or stops the clip in the selected slot;
+  long-press deletes the clip.
+- **Mute** — ``mute`` button toggles track mute.
+- **Solo / Mute (long)** — ``solo`` button solos on short-press, mutes on long-press.
+- **Arm / implicit-arm toggle** — ``arm`` button arms on short-press; long-press toggles
+  the implicit-arm mode (auto-arm the selected track).
+- **Session record** — Short-press toggles arm or session record depending on
+  ``_implicit_arm``; medium-press toggles metronome; very-long-press toggles implicit-arm.
+- **Undo / Redo** — ``undo`` button undoes on short-press, redoes on long-press.
+- **Lock** — ``lock`` button locks the controller to the current track so track
+  navigation no longer changes the controlled track.
+"""
 
 from _Framework.MixerComponent import MixerComponent
 from _Framework.ButtonElement import ButtonElement
@@ -5,15 +24,40 @@ import time
 
 
 class TrackControllerComponent(MixerComponent):
+	"""
+	Single-track controller embedded inside the Instrument Controller mode.
 
-	""" provide a one strip control on the current track  : arm,solo,mute
-			navigate in tracks left/right
-			navigate in scenes up and down
-			fire/stop selected clip.
-			enable/disable session_record
+	Extends ``MixerComponent`` (which handles ``selected_track``/scene change
+	notifications) but overrides its update logic to control only the currently
+	selected (or locked) track.
+
+	Attributes:
+		_prev_track_button / _next_track_button (ButtonElement | None): Track nav.
+		_prev_scene_button / _next_scene_button (ButtonElement | None): Scene nav.
+		_start_stop_button (ButtonElement | None): Fire/stop selected clip slot.
+		_lock_button (ButtonElement | None): Lock to current track.
+		_locked_to_track (bool): ``True`` when track navigation is frozen.
+		_session_record_button (ButtonElement | None): Session-record / arm button.
+		_mute_button (ButtonElement | None): Mute toggle.
+		_solo_button (ButtonElement | None): Solo (short) / mute (long) button.
+		_undo_button (ButtonElement | None): Undo (short) / redo (long) button.
+		_arm_button (ButtonElement | None): Arm (short) / implicit-arm toggle (long).
+		_selected_track: Cached track reference when locked.
+		_control_surface (Launchpad): Owning control surface.
+		_implicit_arm (bool): When ``True`` the selected track is auto-armed for MIDI.
+		_skin_name (str): Skin key prefix used for nav button colours.
+		_long_press (int): Long-press threshold in milliseconds (500 ms).
+		_last_*_button_press (int): Timestamps for long-press detection per button.
 	"""
 
 	def __init__(self, control_surface = None, implicit_arm = False, skin_name = "Session", enabled = False):
+		"""
+		Args:
+			control_surface (Launchpad): Owning control surface.
+			implicit_arm (bool): Start with implicit auto-arm enabled.
+			skin_name (str): Skin key segment for nav button colours (e.g. ``"Session"``).
+			enabled (bool): Initial enabled state.
+		"""
 		self._prev_track_button = None
 		self._next_track_button = None
 		self._prev_scene_button = None

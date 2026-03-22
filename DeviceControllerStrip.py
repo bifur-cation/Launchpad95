@@ -1,21 +1,73 @@
+"""
+DeviceControllerStrip.py — Single device parameter column for the device controller.
+
+Each instance represents one column of the 8×8 matrix and controls one Live
+device parameter.  The display mode is chosen automatically based on the
+parameter type:
+
+``SLIDER_MODE_OFF``            — No parameter mapped; all buttons disabled.
+``SLIDER_MODE_TOGGLE``         — Quantized range == 1; single button toggles on/off.
+``SLIDER_MODE_SMALL_ENUM``     — Quantized range ≤ 8; one lit button per option.
+``SLIDER_MODE_BIG_ENUM``       — Quantized range > 8; buttons 3-4 decrement/increment.
+``SLIDER_MODE_SLIDER``         — Continuous; filled bar graph proportional to value.
+``SLIDER_MODE_PRECISION_SLIDER``— Continuous; buttons 3-4 nudge value by small steps.
+
+This class is the *synchronous* implementation kept for reference.  In practice
+``DeviceControllerStripServer`` (background thread) wrapped by
+``DeviceControllerStripProxy`` is used instead, enabling smooth stepless animation.
+
+When ``_stepless_mode`` is ``True`` and a button is pressed, the strip animates
+the parameter from its current value to the target in a blocking loop with
+``time.sleep(0.1)`` — this runs on the main thread and is the reason the proxy/
+server pattern exists in the production path.
+"""
+
 from .ButtonSliderElement import ButtonSliderElement
 
 import time
-SLIDER_MODE_OFF = 0
-SLIDER_MODE_TOGGLE = 1
-SLIDER_MODE_SLIDER = 2
-SLIDER_MODE_PRECISION_SLIDER = 3
-SLIDER_MODE_SMALL_ENUM = 4
-SLIDER_MODE_BIG_ENUM = 5
+
+# Slider display mode constants
+SLIDER_MODE_OFF = 0              # No parameter — all pads disabled
+SLIDER_MODE_TOGGLE = 1           # Boolean on/off — single top button
+SLIDER_MODE_SLIDER = 2           # Continuous bar graph
+SLIDER_MODE_PRECISION_SLIDER = 3 # Nudge up/down buttons
+SLIDER_MODE_SMALL_ENUM = 4       # Small enumeration — one pad per option
+SLIDER_MODE_BIG_ENUM = 5         # Large enumeration — increment/decrement buttons
 
 #TODO: repeat buttons.
 # not exact / rounding values in slider and precision slider
 
 
 class DeviceControllerStrip(ButtonSliderElement):
+	"""
+	Synchronous single-column device parameter controller (reference implementation).
 
+	Inherits ``ButtonSliderElement`` for parameter binding; adds display-mode
+	selection, toggle/enum/slider/precision LED update methods, and stepless
+	animation (blocking).
+
+	Note: This class is retained for reference but is superseded in production by
+	``DeviceControllerStripServer`` + ``DeviceControllerStripProxy``.
+
+	Attributes:
+		_control_surface (Launchpad): Owning control surface.
+		_column (int): Zero-based column index (0-7); used in skin key names.
+		_parent (DeviceControllerComponent | None): Parent for OSD updates.
+		_num_buttons (int): Number of buttons in this column (always 8).
+		_value_map (tuple[float]): Normalised 0.0-1.0 thresholds per button row.
+		_precision_mode (bool): ``True`` when precision nudge mode is active.
+		_stepless_mode (bool): ``True`` when blocking smooth animation is active.
+		_enabled (bool): Whether this strip processes button input.
+	"""
 
 	def __init__(self, buttons, control_surface, column, parent = None):
+		"""
+		Args:
+			buttons (tuple[ButtonElement]): 8 buttons in the column (top-to-bottom).
+			control_surface (Launchpad): Owning control surface.
+			column (int): Column index used in ``"Device.CustomSlider<n>"`` skin keys.
+			parent (DeviceControllerComponent | None): Parent for OSD callbacks.
+		"""
 		ButtonSliderElement.__init__(self, buttons)
 		self._control_surface = control_surface
 		self._column = column

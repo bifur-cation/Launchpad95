@@ -1,3 +1,25 @@
+"""
+StepSequencerComponent2.py — Melodic (retro-style) step sequencer for Launchpad95.
+
+An alternative step sequencer built on top of ``StepSequencerComponent`` that
+uses a ``MelodicNoteEditorComponent`` instead of ``NoteEditorComponent``.  Each
+step can hold a pitch, octave, velocity, and length independently.
+
+Pad matrix layout (8 columns × 8 rows):
+    - Top two rows (0-1): Side control buttons; mode, quantization, mute.
+    - Rows 2-7: Step notes — each column is a beat step; rows represent note
+      attributes based on the current edit mode.
+
+Sub-modes:
+    STEPSEQ_MODE_NOTES (1)           — Show pitch per step.
+    STEPSEQ_MODE_NOTES_OCTAVES (2)   — Show octave offset per step.
+    STEPSEQ_MODE_NOTES_VELOCITIES (3)— Show velocity per step.
+    STEPSEQ_MODE_NOTES_LENGTHS (4)   — Show note length per step.
+
+Random note feature (``Random`` skin colour): Randomises note pitch within the
+current scale when the random button is held.
+"""
+
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonMatrixElement import ButtonMatrixElement
 from .StepSequencerComponent import StepSequencerComponent, ButtonElement, \

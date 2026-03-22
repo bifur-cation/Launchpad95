@@ -1,8 +1,31 @@
+"""
+SkinMK2.py — Complete colour skin for Launchpad MK2 / Mini MK3 / Launchpad X hardware.
+
+Mirrors the structure of ``SkinMK1`` but uses the full 128-colour RGB palette
+from ``ColorsMK2.Rgb``, including ``Blink`` and ``Pulse`` animated variants for
+clip-playback feedback.
+
+Key differences from MK1 skin:
+- Mixer arm/solo/mute use distinct colours (red/blue/yellow) instead of red/red/amber.
+- DrumGroup pad colours include colour-coded filled states per pad.
+- Note mode uses pulse/blink effects for record and playback feedback.
+- Device sliders use per-column custom colour classes (``CustomSlider0``–``7``).
+- ``ColorSteps`` uses a 10-colour rainbow for Time-Dependent Control (TDC) animation.
+
+The ``make_skin()`` factory wraps ``Colors`` in a ``_Framework.Skin`` instance.
+
+Top-level nested classes (identical names to SkinMK1, different colour values):
+DefaultButton, Mode, Session, ProSession, LaunchQuant, FixedLength, Metronome,
+RecQuant, Zooming, Mixer, Sends, Device, StepSequencer, StepSequencer2,
+Recording, TrackController, DrumGroup, Note, Scale, QuickScale.
+"""
+
 from _Framework.Skin import Skin
 from .ColorsMK2 import Rgb
 
 
 class Colors:
+    """Nested colour hierarchy for the MK2/MK3/LPX skin; passed directly to ``Skin()``."""
     class DefaultButton:
         On = Rgb.GREEN
         Off = Rgb.GREEN_THIRD
@@ -602,4 +625,10 @@ class Colors:
 
 
 def make_skin():
+    """
+    Create and return a ``Skin`` instance for MK2/Mini MK3/Launchpad X hardware.
+
+    Returns:
+        Skin: A ``_Framework.Skin`` wrapping the ``Colors`` class hierarchy.
+    """
     return Skin(Colors)

@@ -1,3 +1,32 @@
+"""
+InstrumentControllerComponent.py — Scale-based playable instrument for the Launchpad.
+
+Turns the 8×8 pad matrix into a chromatic or diatonic note grid, with note-repeat,
+quick-scale overlay, and a track controller for arm/solo/mute/scene navigation.
+
+The pad layout and coloring are driven by a ``ScaleComponent`` that maps each
+``(column, row)`` position to a MIDI note via ``MelodicPattern``.  On MK2/MK3/LPX
+hardware, MIDI note-feedback from Live is rendered in colour (green = in-scale,
+blue = root, etc.) using the skin's ``Note.Pads.*`` colour keys.
+
+Side-button assignment:
+    0 = Scale toggle (switch to scale-editor matrix view)
+    1 = Undo (delegated to TrackControllerComponent)
+    2 = Octave up
+    3 = Octave down
+    4 = Fire/stop clip
+    5 = Lock to track
+    6 = Solo
+    7 = Session record / arm
+
+Top-button assignment (delegated to TrackControllerComponent):
+    0 = Previous scene, 1 = Next scene, 2 = Previous track, 3 = Next track
+
+Quick-scale mode shows a compact key/modus selector on top of the note grid
+using rows 0-1 of the matrix, allowing fast key changes without entering the
+full scale editor.
+"""
+
 import Live
 from _Framework.CompoundComponent import CompoundComponent
 from _Framework.SubjectSlot import subject_slot

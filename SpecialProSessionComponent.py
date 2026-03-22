@@ -1,4 +1,27 @@
 # imported from https://github.com/poltow/Launchpad97
+"""
+SpecialProSessionComponent.py — Pro Session mode with recording, quantization, and clip actions.
+
+Extends ``SpecialSessionComponent`` to add a rich set of Pro Session controls:
+
+- **Shift button** — Hold to enable secondary actions (delete, duplicate, quantize, etc.).
+- **Session recording** — ``SpecialProSessionRecordingComponent`` with fixed-length
+  and launch-quantization support.
+- **Clip actions** — Delete, duplicate, double, and quantize clips via shifted buttons.
+- **Metronome** — Nudge tempo with click button.
+- **Launch quantization** — Adjustable from the side buttons.
+- **Fixed length** — Configurable record length for session record.
+- **Recording quantization** — Adjustable record quantization.
+- **Target track** — ``TargetTrackComponent`` selects the track that receives recording.
+
+Module-level constants
+----------------------
+REC_QNTZ_RATES / REC_QNTZ_FIXED_RATES: ``RecordingQuantization`` enum values.
+LAUNCH_QNTZ_RATES / LAUNCH_QNTZ_FIXED_RATES: ``Quantization`` enum values.
+LENGTH_OPTION_NAMES / FIXED_LENGTH_VALUES: Fixed-length option names and bar counts.
+MAX_FIXED_LENGTH (int): Maximum fixed-length value (31 bars).
+LONG_PRESS / SHORT_PRESS (float): Press duration thresholds in seconds.
+"""
 
 import Live
 #import traceback

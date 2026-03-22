@@ -1,3 +1,44 @@
+"""
+ScaleComponent.py — Musical scale/key management for the Instrument Controller.
+
+Provides three cooperating classes:
+
+``Scale``
+    A simple named container holding a list of note indices (0-11 chromatic offsets).
+
+``Modus``
+    A scale mode (e.g. "Major", "Dorian") that can generate root-transposed ``Scale``
+    instances via ``scale(base_note)``.  All modes are loaded from
+    ``Live.Song.get_all_scales_ordered()`` at import time.
+
+``MelodicPattern``
+    Translates a 2-D pad grid coordinate ``(x, y)`` into a ``NoteInfo`` tuple
+    containing the MIDI note index, MIDI channel, and scale-membership flags.
+    Supports five layout modes:
+    - ``diatonic``         — Staggered scale tones (default).
+    - ``diatonic_ns``      — Non-staggered diatonic (full scale-size step per row).
+    - ``diatonic_chords``  — Vertical chord voicing.
+    - ``chromatic``        — Chromatic semitone grid.
+    - ``chromatic_gtr``    — Guitar-string chromatic with string break at row 4.
+
+``ScaleComponent``
+    A ``ControlSurfaceComponent`` that owns an 8×8 ``matrix`` and drives a
+    scale/key editor UI.  The layout is:
+    - Row 0: Layout mode buttons (absolute root, horizontal, chromatic_gtr, diatonic_ns,
+      diatonic_chords, diatonic, chromatic, drumrack).
+    - Row 1: Sharp/black keys + circle-of-fifths ← + relative scale + quick-scale toggle.
+    - Row 2: Natural/white keys + circle-of-fifths →.
+    - Row 3: Octave selector (0 to top_octave-1).
+    - Rows 4-7: Modus (scale mode) selector; up to 32 modes across 4 rows of 8.
+
+Module-level constants
+----------------------
+KEY_NAMES (list[str]): Chromatic note names ``["C", "C#", … "B"]``.
+CIRCLE_OF_FIFTHS (list[int]): Note indices in circle-of-fifths order.
+MUSICAL_MODES (list): Flat list alternating name/notes loaded from Live.
+TOP_OCTAVE (dict[str, int]): Maximum octave index per layout mode.
+"""
+
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 import Live
 #fix for python3
@@ -6,7 +47,9 @@ try:
 except NameError:
     xrange = range
 
+# Chromatic note names (index 0 = C)
 KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+# Circle of fifths: each entry is (7*k) % 12, giving note indices in 5th-jump order
 CIRCLE_OF_FIFTHS = [7 * k % 12 for k in range(12)]
 # KEY_CENTERS = CIRCLE_OF_FIFTHS[0:6] + CIRCLE_OF_FIFTHS[-1:5:-1]
 
@@ -21,8 +64,35 @@ TOP_OCTAVE = {"chromatic_gtr": 7, "diatonic_ns": 2, "diatonic_chords": 7, "diato
 
 
 class ScaleComponent(ControlSurfaceComponent):
-	
-	#matrix = control_matrix(PlayableControl)
+	"""
+	Scale/key editor component that drives an 8×8 button matrix.
+
+	Listens to ``song().root_note`` and ``song().scale_name`` changes and keeps
+	the pad grid in sync.  Also exposes ``get_pattern()`` which returns a
+	:class:`MelodicPattern` for the ``InstrumentControllerComponent`` to use when
+	laying out playable notes.
+
+	Attributes:
+		_layout_set (bool): Internal guard; currently unused.
+		_modus_list (list[Modus]): All available scale modes loaded from Live.
+		_modus_names (list[str]): Human-readable names matching ``_modus_list``.
+		_control_surface (Launchpad): Owning control surface (for ``show_message``).
+		_osd (M4LInterface | None): OSD bridge.
+		_modus (int): Index of the currently selected scale mode.
+		_key (int): Root note (0-11; 0=C).
+		_octave (int): Current octave selector value (0 to _top_octave-1).
+		_mode (str): Layout mode name; one of the ``TOP_OCTAVE`` keys.
+		_is_drumrack (bool): ``True`` when pad layout is drumrack mode.
+		_quick_scale (bool): ``True`` when quick-scale overlay is shown.
+		_is_horizontal (bool): ``True`` for horizontal (row-major) layout.
+		_is_absolute (bool): ``True`` to use absolute root note anchoring.
+		_interval (int): Row interval (semi-tones or scale steps between rows).
+		_matrix (ButtonMatrixElement | None): The 8×8 pad matrix.
+		_top_octave (int): Maximum octave index for the current mode.
+		_white_notes_index (list[int]): Chromatic indices of white keys [C,D,E,F,G,A,B].
+		_current_minor_mode (int): Remembered minor modus index for relative scale jump.
+		_minor_modes (list[int]): Modus indices for Natural/Harmonic/Melodic minor.
+	"""
 
 	def __init__(self, control_surface = None, enabled = False, mode = "diatonic", *a, **k):
 		self._layout_set = False
@@ -99,6 +169,15 @@ class ScaleComponent(ControlSurfaceComponent):
 		return self._modus_list[self._modus]
 
 	def set_key(self, key, message = True, listener_called = False):
+		"""
+		Set the root note and optionally sync back to the Live song.
+
+		Args:
+			key (int): Chromatic root note index (0-11).
+			message (bool): Show a status message in Live.
+			listener_called (bool): ``True`` when called from a song listener
+				(avoids a recursive Live property write).
+		"""
 		if key>=0 and key<=11:
 			self._key = key % 12
 			if not listener_called:
@@ -130,6 +209,14 @@ class ScaleComponent(ControlSurfaceComponent):
 		self.set_octave(self._octave - 1, message) 
 		
 	def set_modus(self, index, message = True, listener_called = False):
+		"""
+		Select a scale mode by index.
+
+		Args:
+			index (int): Index into ``_modus_list`` (0 = Major/Ionian).
+			message (bool): Show a status message in Live.
+			listener_called (bool): ``True`` when called from a song listener.
+		"""
 		if index > -1 and index < len(self._modus_list):
 			self._modus = index
 			if not listener_called:
@@ -488,6 +575,16 @@ class ScaleComponent(ControlSurfaceComponent):
 	
 	
 	def get_pattern(self):
+		"""
+		Build and return a ``MelodicPattern`` for the current scale/key/mode settings.
+
+		Computes the correct origin offset, interval, and layout orientation, then
+		returns a pattern object that the instrument controller can use to map each
+		``(x, y)`` pad coordinate to a MIDI note.
+
+		Returns:
+			MelodicPattern: Configured pattern for the current scale state.
+		"""
 		notes = self.notes
 		# origin
 		if not self._is_absolute:
@@ -529,34 +626,89 @@ class ScaleComponent(ControlSurfaceComponent):
 		
 
 class Scale(object):
+	"""
+	Simple named container for a set of MIDI note indices.
 
-	# Input vars: scale name, array of scale steps -> (ScaleName, ScaleSteps)
+	Attributes:
+		name (str): Human-readable name (e.g. ``"C"``, ``"Major"``).
+		notes (list[int]): Sorted list of MIDI note indices in this scale.
+	"""
+
 	def __init__(self, name, notes, *a, **k):
+		"""
+		Args:
+			name (str): Scale name.
+			notes (list[int] | range): MIDI note indices that belong to this scale.
+		"""
 		super(Scale, self).__init__(*a, **k)
 		self.name = name
 		self.notes = notes
 
 
 class Modus(Scale):
+	"""
+	A scale mode that can generate root-transposed ``Scale`` instances.
+
+	Inherits ``name`` and ``notes`` from ``Scale``; ``notes`` here are relative
+	chromatic offsets from the root (e.g. ``[0, 2, 4, 5, 7, 9, 11]`` for Major).
+	"""
 
 	def __init__(self, *a, **k):
 		super(Modus, self).__init__(*a, **k)
 
 	def scale(self, base_note):
+		"""
+		Return a ``Scale`` transposed to the given root note.
+
+		Args:
+			base_note (int): Root note chromatic index (0-11).
+
+		Returns:
+			Scale: Named scale with absolute MIDI note offsets.
+		"""
 		return Scale(KEY_NAMES[base_note], [base_note + x for x in self.notes])
 
 	def scales(self, base_notes):
+		"""
+		Return a list of ``Scale`` instances for multiple root notes.
+
+		Args:
+			base_notes (iterable[int]): Root note indices to generate scales for.
+
+		Returns:
+			list[Scale]: One transposed scale per base note.
+		"""
 		return [self.scale(b) for b in base_notes]
 
 
 class MelodicPattern(object):
+	"""
+	Maps a 2-D pad coordinate ``(x, y)`` to a MIDI note with scale metadata.
+
+	Used by ``InstrumentControllerComponent`` to colour pads and generate MIDI
+	note-on events.  Supports diatonic, chromatic, and guitar-string layouts.
+
+	Attributes:
+		steps (list[int, int]): ``[x_step, y_step]`` — how many scale steps to
+		    advance per column/row.  For horizontal diatonic mode: ``[1, interval]``.
+		scale (list[int] | range): Scale note offsets within one octave.
+		base_note (int): MIDI note at the (0,0) origin.  Typically ``(octave+1)*12``.
+		origin (list[int, int]): ``[x_origin, y_origin]`` — index offset applied
+		    before stepping; used to implement absolute-root anchoring.
+		valid_notes (range): MIDI note range considered playable (default 0-127).
+		chromatic_mode (bool): Use full chromatic scale with fixed 5-semitone rows.
+		chromatic_gtr_mode (bool): Chromatic with guitar-style string break at row 4
+		    (row 4+ is one semitone lower than normal).
+		diatonic_ns_mode (bool): Non-staggered diatonic; each row advances a full
+		    scale octave.
+	"""
 
 	def __init__(self,
-	 		steps=[0, 0], 
-			scale=range(12), 
-			base_note=0, 
-			origin=[0, 0], 
-			valid_notes=xrange(128), 
+	 		steps=[0, 0],
+			scale=range(12),
+			base_note=0,
+			origin=[0, 0],
+			valid_notes=xrange(128),
 			chromatic_mode=False,
 			chromatic_gtr_mode=False,
 			diatonic_ns_mode=False,
@@ -572,6 +724,17 @@ class MelodicPattern(object):
 		self.diatonic_ns_mode = diatonic_ns_mode
 
 	class NoteInfo:
+		"""
+		Data class returned by ``MelodicPattern.note()``.
+
+		Attributes:
+			index (int): MIDI note number (0-127).
+			channel (int): MIDI channel derived from the pad's x-coordinate.
+			root (bool): ``True`` if this note is the scale root.
+			highlight (bool): ``True`` if this is the 3rd or 5th scale degree.
+			in_scale (bool): ``True`` if the note belongs to the current scale.
+			valid (bool): ``True`` if the note falls within ``valid_notes``.
+		"""
 
 		def __init__(self, index, channel, root = False, highlight = False, in_scale = False, valid = False):
 			self.index = index
@@ -605,6 +768,16 @@ class MelodicPattern(object):
 		return (octave, note)
 
 	def note(self, x, y):
+		"""
+		Compute the ``NoteInfo`` for pad at column ``x``, row ``y``.
+
+		Args:
+			x (int): Pad column (0-7); also used as MIDI channel.
+			y (int): Pad row (0-7).
+
+		Returns:
+			NoteInfo: MIDI note index and scale-membership flags for this pad.
+		"""
 		octave, note = self._octave_and_note(x, y)
 		index = (self.base_note + 12 * octave + note) % 128 
 		root = note == self.scale[0]

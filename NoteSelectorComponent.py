@@ -1,8 +1,42 @@
+"""
+NoteSelectorComponent.py — Note/pitch selector for the drum step sequencer.
+
+Provides a 16-button offset grid (typically the left two columns of the 8-row side
+button bank, or a sub-section of the matrix) that allows the user to select which
+pitch/drum-pad note is currently being edited by the ``NoteEditorComponent``.
+
+Features:
+- Shows up to 16 consecutive pitches starting from ``_root_note`` (default MIDI 36 = C2).
+- The currently selected pitch is highlighted; pitches that contain at least one
+  step in the clip are lit with a lower brightness.
+- Up/down navigation buttons shift the 16-pitch window by 16 semitones.
+- Playhead feedback: the button for the note currently playing is briefly highlighted.
+- Scale awareness: when a ``_scale`` is set, only scale-members are highlighted.
+"""
+
 from _Framework.ButtonElement import ButtonElement
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 
-#Allows to note selection and navigation through note groups and pages
 class NoteSelectorComponent(ControlSurfaceComponent):
+    """
+    Pitch/drum-note selector for the step sequencer.
+
+    Attributes:
+        _step_sequencer: Parent ``StepSequencerComponent`` reference.
+        _control_surface (Launchpad): Owning control surface.
+        _clip (Live.Clip.Clip | None): Clip currently being sequenced.
+        _track: Track that owns the clip.
+        _notes (list | None): Cached note data.
+        _playhead (int | None): Currently playing note index.
+        _root_note (int): Lowest MIDI note in the current 16-note window (default 36).
+        _offset (int): Selected relative offset within the 16-button window (0-15).
+        _key (int): Current root key for scale highlighting.
+        _scale (list[int]): Scale intervals for highlighting (default Major).
+        _force (bool): Forces a full display refresh on next update.
+        _up_button / _down_button (ButtonElement | None): Window scroll buttons.
+        _offset_buttons (list[ButtonElement]): 16 pitch-select buttons.
+        _enable_offset_button (bool): Whether offset buttons are active.
+    """
 
     def __init__(self, step_sequencer, offset_buttons, control_surface):
         self._step_sequencer = step_sequencer

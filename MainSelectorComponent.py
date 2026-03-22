@@ -1,4 +1,31 @@
 # -*- coding: utf-8 -*-
+"""
+MainSelectorComponent.py — Top-level mode switcher for Launchpad95.
+
+This is the central coordinator of the entire script.  It extends
+``_Framework.ModeSelectorComponent`` to manage four primary modes:
+
+0. **Session** — Standard clip-launch grid (``SpecialProSessionComponent``).
+1. **User1**   — Cycles through modes listed in ``Settings.USER_MODES_1``
+                 (instrument, device, user 1 raw MIDI).
+2. **User2**   — Cycles through modes listed in ``Settings.USER_MODES_2``
+                 (drum step sequencer, melodic step sequencer, user 2 raw MIDI).
+3. **Mixer**   — Sub-mode mixer (``SubSelectorComponent``).
+
+Each primary mode button cycles through its sub-modes on repeated presses.
+Session mode additionally supports a short-press toggle between normal and
+"Pro Session" mode via ``_pro_session_on``.
+
+MIDI Channels used per mode (0-indexed, i.e. channel 1 = index 0):
+    Session          → 0
+    Instrument       → 11 (base; instrument controller uses 11-15)
+    Device           → 3
+    User 1           → 4
+    Drum Step Seq    → 1
+    Melodic Step Seq → 2
+    User 2           → 5
+    Mixer sub-modes  → 6-10 (base + SubSelectorComponent.mode())
+"""
 
 from _Framework.ModeSelectorComponent import ModeSelectorComponent
 from _Framework.ButtonElement import ButtonElement
@@ -21,12 +48,54 @@ except ImportError:
     from .Settings import *
 
 class MainSelectorComponent(ModeSelectorComponent):
+	"""
+	Top-level mode selector — reassigns all Launchpad buttons to active mode's function.
 
-	""" Class that reassigns the button on the launchpad to different functions """
-
+	Attributes:
+		_matrix (ButtonMatrixElement): The 8×8 pad grid.
+		_nav_buttons (tuple[ConfigurableButtonElement]): Top 4 arrow/navigation buttons.
+		_mode_buttons (tuple[ConfigurableButtonElement]): Top 4 mode-select buttons
+		    (Session, User1, User2, Mixer).
+		_side_buttons (tuple[ConfigurableButtonElement]): 8 right-side launch buttons.
+		_config_button (ButtonElement): CC-0 button used to send LP layout config bytes.
+		_osd (M4LInterface): On-Screen Display shared data bus.
+		_control_surface (Launchpad): The owning control surface.
+		_note_repeat (NoteRepeatComponent): Note-repeat sub-component.
+		_c_instance: The raw Ableton control-surface C instance.
+		_pro_session_on (bool): Whether Pro Session mode is currently active.
+		_long_press (int): Long-press threshold in milliseconds (500 ms).
+		_last_session_mode_button_press (int): Timestamp of last Session button press (ms).
+		_aux_scene: Temporarily removed scene during Pro Session mode.
+		_main_mode_index (int): Current primary mode (0=Session, 1=User1, 2=User2, 3=Mixer).
+		_sub_mode_list (list[int]): Per-primary-mode sub-mode index (len 4).
+		_last_mode_index (int): Previous primary mode index; used for repeat-press detection.
+		_clip_stop_buttons (list[ButtonElement]): Bottom row of matrix used as stop buttons.
+		_session (SpecialProSessionComponent): Session component.
+		_zooming (DeprecatedSessionZoomingComponent): Session overview/zoom component.
+		_sub_modes (SubSelectorComponent): Mixer sub-mode selector.
+		_stepseq (StepSequencerComponent): Drum step sequencer.
+		_stepseq2 (StepSequencerComponent2): Melodic step sequencer.
+		_instrument_controller (InstrumentControllerComponent): Instrument/scale mode.
+		_device_controller (DeviceControllerComponent): Device parameter controller.
+		_all_buttons (tuple): All non-matrix buttons; their MIDI channel is updated
+		    on every mode change via ``_update_control_channels()``.
+	"""
 
 	def __init__(self, matrix, top_buttons, side_buttons, config_button, osd, control_surface, note_repeat, c_instance):
-		#verify matrix dimentions
+		"""
+		Create all sub-components and wire them to the button layout.
+
+		Args:
+			matrix (ButtonMatrixElement): The 8×8 pad grid.
+			top_buttons (tuple): 8 top-row buttons (indices 0-3 = nav, 4-7 = mode).
+			side_buttons (tuple): 8 right-side scene/function buttons.
+			config_button (ButtonElement): Launchpad config CC button.
+			osd (M4LInterface): OSD data bus.
+			control_surface (Launchpad): Owning control surface.
+			note_repeat (NoteRepeatComponent): Note-repeat component.
+			c_instance: Raw Ableton C instance (used for ``song()`` access).
+		"""
+		#verify matrix dimensions
 		assert isinstance(matrix, ButtonMatrixElement)
 		assert ((matrix.width() == 8) and (matrix.height() == 8))
 		assert isinstance(top_buttons, tuple)
@@ -113,6 +182,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 		self._all_buttons = tuple(self._all_buttons)
 
 	def disconnect(self):
+		"""Remove all mode-button listeners and release hardware references."""
 		for button in self._modes_buttons:
 			button.remove_value_listener(self._mode_value)
 
@@ -129,9 +199,20 @@ class MainSelectorComponent(ModeSelectorComponent):
 		ModeSelectorComponent.disconnect(self)
 
 	def session_component(self):
+		"""Return the ``SpecialProSessionComponent`` for external use (e.g. highlight)."""
 		return self._session
 
 	def _update_mode(self):
+		"""
+		Apply the pending mode from the heap and cycle sub-modes on repeat presses.
+
+		If the incoming mode index equals the current ``_main_mode_index``:
+		- User1/User2: advance the sub-mode index (modulo list length).
+		- Mixer: just refresh.
+		- Session: reset sub-mode to 0.
+
+		Otherwise: update ``_main_mode_index`` and call ``update()``.
+		"""
 		mode = self._modes_heap[-1][0] #get first value of last _modes_heap tuple. _modes_heap tuple structure is (mode, sender, observer) 
 
 		assert mode in range(self.number_of_modes()) # 8 for this script
@@ -154,6 +235,12 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self.update()
 
 	def set_mode(self, mode):
+		"""
+		Jump directly to a mode without cycling sub-modes.
+
+		Args:
+			mode (int): Primary mode index (0-3).
+		"""
 		self._clean_heap()
 		self._modes_heap = [(mode, None, None)]
 		# if ((self.__main_mode_index != mode) or (mode == 3) or True):
@@ -162,6 +249,16 @@ class MainSelectorComponent(ModeSelectorComponent):
 		# 	self.update()
 
 	def _mode_value(self, value, sender):
+		"""
+		Handle a mode button press/release and detect short-press Pro Session toggle.
+
+		A short press (< ``_long_press`` ms) on the Session button while already in
+		Session mode toggles ``_pro_session_on`` and forces a mode update.
+
+		Args:
+			value (int): Button velocity (non-zero = pressed).
+			sender (ButtonElement): The button that fired the event.
+		"""
 		assert len(self._modes_buttons) > 0
 		assert isinstance(value, int)
 		assert sender in self._modes_buttons
@@ -181,12 +278,14 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._update_mode() 
 
 	def number_of_modes(self):
+		"""Return the total number of mode slots (8 = 1 session + 3 user1 + 3 user2 + 1 mixer)."""
 		return 1 + 3 + 3 + 1
 
 	def on_enabled_changed(self):
 		self.update()
 
 	def _update_mode_buttons(self):
+		"""Set on/off skin values and turn on the currently active mode button."""
 		self._modes_buttons[0].set_on_off_values("Mode.Session.On","Mode.Session.Off")
 		self._modes_buttons[3].set_on_off_values("Mode.Mixer.On","Mode.Mixer.Off")
 		mode1 = self.getSkinName(Settings.USER_MODES_1[self._sub_mode_list[1]])
@@ -201,6 +300,15 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._modes_buttons[index].turn_off()
 		
 	def getSkinName(self, user2Mode):
+		"""
+		Convert a Settings mode name string to its corresponding skin key segment.
+
+		Args:
+			user2Mode (str): Mode name as stored in ``Settings.USER_MODES_1/2``.
+
+		Returns:
+			str: Skin key segment used in ``"Mode.<segment>.On/Off"`` lookups.
+		"""
 		if user2Mode=="instrument":
 			user2Mode = "Note"
 		if user2Mode=="device":
@@ -216,6 +324,15 @@ class MainSelectorComponent(ModeSelectorComponent):
 		return user2Mode
 		
 	def channel_for_current_mode(self):
+		"""
+		Return the MIDI channel (0-indexed) for the current primary/sub-mode.
+
+		Used by ``_update_control_channels()`` to reroute all button MIDI messages
+		to the channel expected by the active mode's note handler.
+
+		Returns:
+			int: MIDI channel index in range 0-15.
+		"""
 		# in this code, midi channels start at 0.
 		# so channels range from 0 - 15.
 		# mapping to 1-16 in the real world
@@ -249,6 +366,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 		return new_channel
 	
 	def update(self):
+		"""Activate the correct sub-components for the current primary mode."""
 		assert (self._modes_buttons != None)
 		if self.is_enabled():
 
@@ -299,6 +417,13 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._zooming.set_allow_update(True)
 		
 	def _setup_sub_mode(self, mode):
+		"""
+		Activate the appropriate sub-mode component for User1/User2 primary modes.
+
+		Args:
+			mode (str): Mode name string from ``Settings.USER_MODES_1`` or
+				``Settings.USER_MODES_2`` (e.g. ``"instrument"``, ``"drum stepseq"``).
+		"""
 		as_active = True
 		as_enabled = True
 		if mode == "instrument":
@@ -371,6 +496,16 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._osd.update()
 		
 	def _setup_session(self, as_active, as_navigation_enabled):
+		"""
+		Configure session mode: wire clip-slot buttons, scene launch, zooming, and nav.
+
+		In Pro Session mode the bottom row becomes stop-clip buttons and the last
+		scene is removed from the session (stored in ``_aux_scene``).
+
+		Args:
+			as_active (bool): ``True`` to enable clip-launch binding.
+			as_navigation_enabled (bool): ``True`` to bind nav buttons to bank scroll.
+		"""
 		assert isinstance(as_active, type(False))#assert is boolean
 		for button in self._nav_buttons:
 			if as_navigation_enabled:
@@ -465,6 +600,12 @@ class MainSelectorComponent(ModeSelectorComponent):
 		
 		
 	def _setup_instrument_controller(self, as_active):
+		"""
+		Enable or disable the instrument controller, restoring button channels on exit.
+
+		Args:
+			as_active (bool): ``True`` to hand buttons over to the instrument controller.
+		"""
 		if self._instrument_controller != None:
 			if as_active:
 				self._activate_matrix(False) #Disable matrix buttons (clip slots)
@@ -482,6 +623,12 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._instrument_controller.set_enabled(as_active)#Enable/disable instrument controller
 
 	def _setup_device_controller(self, as_active):
+		"""
+		Enable or disable the device controller mode.
+
+		Args:
+			as_active (bool): ``True`` to activate device parameter control.
+		"""
 		if self._device_controller != None:
 			if as_active:
 				self._activate_scene_buttons(True)
@@ -496,6 +643,19 @@ class MainSelectorComponent(ModeSelectorComponent):
 				temp=self._device_controller.set_enabled(False)
 
 	def _setup_user_mode(self, release_matrix=True, release_side_buttons=True, release_nav_buttons=True, drum_rack_mode=True):
+		"""
+		Configure buttons for a raw user-MIDI mode (User1 or User2).
+
+		When a button group is "released" (``True``), its MIDI messages pass through
+		unintercepted to the Live track.  When ``drum_rack_mode`` is ``True``, sends
+		LP config byte 2 to enable drum-rack grid mapping.
+
+		Args:
+			release_matrix (bool): Pass matrix buttons through to MIDI (True for User1).
+			release_side_buttons (bool): Pass side buttons through to MIDI.
+			release_nav_buttons (bool): Pass nav buttons through to MIDI.
+			drum_rack_mode (bool): Send LP drum-rack layout config byte.
+		"""
 		# user1 -> All True but release_nav_buttons / user2 -> All false 
 		for scene_index in range(8):
 			scene_button = self._side_buttons[scene_index]
@@ -520,6 +680,11 @@ class MainSelectorComponent(ModeSelectorComponent):
 		self._config_button.send_value(32)#Send enable flashing led config message to LP
 				
 	def _setup_step_sequencer(self, as_active):
+		"""Enable or disable the drum step sequencer.
+
+		Args:
+			as_active (bool): ``True`` to activate drum step sequencer mode.
+		"""
 		if(self._stepseq != None):
 			#if(self._stepseq.is_enabled() != as_active):
 			if as_active:
@@ -532,6 +697,11 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._stepseq.set_enabled(False)
 
 	def _setup_step_sequencer2(self, as_active):
+		"""Enable or disable the melodic step sequencer.
+
+		Args:
+			as_active (bool): ``True`` to activate melodic step sequencer mode.
+		"""
 		if(self._stepseq2 != None):
 			#if(self._stepseq2.is_enabled() != as_active):
 			if as_active:
@@ -544,6 +714,11 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._stepseq2.set_enabled(False)
 
 	def _setup_mixer(self, as_active):
+		"""Enable or disable the mixer (SubSelectorComponent) mode.
+
+		Args:
+			as_active (bool): ``True`` to activate mixer sub-mode selection.
+		"""
 		assert isinstance(as_active, type(False))
 		if as_active:
 			self._activate_navigation_buttons(True)
@@ -557,6 +732,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 		self._sub_modes.set_enabled(as_active)
 
 	def _init_session(self):
+		"""Populate ``_all_buttons`` with all matrix buttons for channel management."""
 		#self._session.set_stop_clip_value("Session.StopClip")
 		#self._session.set_stop_clip_triggered_value("Session.ClipTriggeredStop")
 		
@@ -584,19 +760,35 @@ class MainSelectorComponent(ModeSelectorComponent):
 		#self._zooming.set_playing_value("Zooming.Playing")	 
 
 	def _activate_navigation_buttons(self, active):
+		"""Enable or disable all navigation buttons.
+
+		Args:
+			active (bool): ``True`` to enable, ``False`` to disable.
+		"""
 		for button in self._nav_buttons:
 			button.set_enabled(active)
 
 	def _activate_scene_buttons(self, active):
+		"""Enable or disable all side scene/launch buttons.
+
+		Args:
+			active (bool): ``True`` to enable.
+		"""
 		for button in self._side_buttons:
 			button.set_enabled(active)
 
 	def _activate_matrix(self, active):
+		"""Enable or disable all 64 matrix pad buttons.
+
+		Args:
+			active (bool): ``True`` to enable.
+		"""
 		for scene_index in range(8):
 			for track_index in range(8):
 				self._matrix.get_button(track_index, scene_index).set_enabled(active)
 
 	def _turn_off_scene_buttons(self):
+		"""Set all side buttons to the Disabled skin colour and turn them off."""
 		for side_button in self._side_buttons:
 			side_button.set_on_off_values("DefaultButton.Disabled", "DefaultButton.Disabled")
 			side_button.turn_off()
@@ -604,8 +796,11 @@ class MainSelectorComponent(ModeSelectorComponent):
 	def log_message(self, msg):
 		self._control_surface.log_message(msg)
 
-	# Update the channels of the buttons in the user modes..
 	def _update_control_channels(self):
+		"""
+		Update the MIDI channel of every button in ``_all_buttons`` to match the
+		current mode's expected channel, then force an immediate LED refresh.
+		"""
 		new_channel = self.channel_for_current_mode()
 		for button in self._all_buttons:
 			button.set_channel(new_channel)

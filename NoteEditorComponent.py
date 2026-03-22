@@ -1,8 +1,46 @@
+"""
+NoteEditorComponent.py — Step-grid display and editing for the drum step sequencer.
+
+Renders the 8×8 button matrix as a step-note grid for the currently selected
+clip and note pitch.  Features:
+
+- **Velocity display** — Steps are colour-graded from dim to bright based on
+  note velocity using ``velocity_map`` thresholds and ``velocity_color_map`` keys.
+- **Muted notes** — Displayed in the ``muted_note_color`` skin key.
+- **Playhead** — The column currently being played is highlighted with the
+  ``playing_note_color`` skin key.
+- **Metronome indicator** — Beat/bar markers shown when ``display_metronome`` is True.
+- **Page markers** — The current loop page and adjacent pages are colour-coded.
+- **Note toggle** — Pressing a lit step removes the note; pressing a dark step
+  adds a note at the configured velocity.
+- **Velocity editing** — Hold a lit step and press a row button to adjust velocity.
+
+Used by both ``StepSequencerComponent`` (drum notes) and
+``StepSequencerComponent2`` (melodic ``MelodicNoteEditorComponent`` subclass).
+"""
+
 from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 from _Framework.ButtonElement import ButtonElement
 import time
 
 class NoteEditorComponent(ControlSurfaceComponent):
+    """
+    8×8 step-note grid editor component.
+
+    Attributes:
+        _stepsequencer: Parent ``StepSequencerComponent`` reference.
+        _control_surface (Launchpad): Owning control surface.
+        _clip (Live.Clip.Clip | None): Clip being edited.
+        _note_cache (list | None): Cached note data to minimise re-reads.
+        _playhead (int | None): Current playhead step index.
+        display_metronome (bool): Show metronome beat markers (default True).
+        metronome_color (str): Skin key for the metronome step indicator.
+        _current_page (int): Current loop page (-1 = uninitialised).
+        velocity_map (list[int]): Velocity thresholds ``[20, 50, 80, 105, 127]``.
+        velocity_color_map (list[str]): Skin key names per velocity tier.
+        muted_note_color (str): Skin key for muted notes.
+        playing_note_color (str): Skin key for the playing step.
+    """
 
 	def __init__(self, stepsequencer = None, matrix = None, control_surface = None):
 		ControlSurfaceComponent.__init__(self)

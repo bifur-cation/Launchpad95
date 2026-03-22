@@ -1,3 +1,24 @@
+"""
+DeviceControllerComponent.py — Device parameter controller for Launchpad95.
+
+Extends ``_Framework.DeviceComponent`` to provide a full hardware interface for
+controlling the currently selected (or locked) Ableton Live device:
+
+- **8 parameter sliders** — Each matrix column becomes a ``DeviceControllerStripProxy``
+  that visualises and controls one device parameter using button-height bar graphs,
+  toggle buttons, enum selectors, or precision-step controls.
+- **Bank navigation** — Previous/next bank buttons page through parameter banks of 8.
+- **Device navigation** — Previous/next device buttons walk through the device chain
+  on the selected track, supporting nested rack chains.
+- **Track navigation** — Previous/next track buttons change the selected Live track.
+- **Lock system** — Four lock buttons each store a device reference.  Short-press
+  locks/unlocks the display to that device; long-press stores the current device.
+- **Precision / stepless toggle** — Side button cycles between normal, precision,
+  and (long-press) stepless (animated) fader modes.
+- **On/Off button** — Toggles the first device on/off parameter.
+- **OSD** — Pushes parameter names/values and device/track info to the M4L OSD.
+"""
+
 from _Framework.DeviceComponent import DeviceComponent
 from _Framework.ButtonElement import ButtonElement
 import sys
@@ -11,11 +32,53 @@ except ImportError:
 
 
 class DeviceControllerComponent(DeviceComponent):
+	"""
+	Device parameter controller using the full 8×8 pad matrix as parameter sliders.
+
+	Attributes:
+		_control_surface (Launchpad): Owning control surface.
+		_device (Live.Device.Device | None): Currently controlled device.
+		_matrix (ButtonMatrixElement | None): The 8×8 pad grid.
+		_selected_track (Live.Track.Track | None): Currently selected track.
+		_prev_track_button / _next_track_button (ButtonElement | None): Track nav.
+		_prev_device_button / _next_device_button (ButtonElement | None): Device nav.
+		_prev_bank_button / _next_bank_button (ButtonElement | None): Bank nav.
+		_mode_toggle_button (ButtonElement | None): Short = precision, long = stepless.
+		_last_mode_toggle_button_press (float): Timestamp for long-press detection.
+		_precision_mode (bool): ``True`` when precision fader mode is active.
+		_stepless_mode (bool): ``True`` when smooth animated fader mode is active.
+		_lock_buttons (list[ButtonElement | None]): 4 device-lock buttons.
+		_locked_devices (list[Live.Device.Device | None]): Devices stored in 4 lock slots.
+		_locked_device_index (int | None): Index of currently active lock slot, or None.
+		_locked_device_bank (list[int]): Bank index saved per lock slot.
+		_lock_button_press (list[float]): Press-start timestamps for long-press detection.
+		_is_active (bool): Whether this component is in the active mode.
+		_force (bool): Forces full matrix refresh on next ``update()``.
+		_osd (M4LInterface | None): OSD data bridge.
+		_sliders (tuple[DeviceControllerStripProxy]): 8 per-column parameter proxies.
+	"""
     __module__ = __name__
     __doc__ = ''
 
     def __init__(self, control_surface=None, name="device_component",
         is_enabled=False, matrix=None, side_buttons=None, top_buttons=None):
+        """
+        Create sliders and assign all navigation/lock/toggle buttons.
+
+        Side buttons are mapped as (index 0-7):
+            0 = device on/off, 1 = prev bank, 2 = next bank,
+            3 = mode toggle (precision/stepless), 4-7 = lock slots 1-4.
+        Top buttons are mapped as (index 0-3):
+            0 = prev device, 1 = next device, 2 = prev track, 3 = next track.
+
+        Args:
+            control_surface (Launchpad): Owning control surface.
+            name (str): Component name (default ``"device_component"``).
+            is_enabled (bool): Initial enabled state.
+            matrix (ButtonMatrixElement | None): 8×8 pad grid for sliders.
+            side_buttons (tuple | None): 8 right-side buttons.
+            top_buttons (tuple | None): 4 navigation buttons.
+        """
         self._control_surface = control_surface
         self.name = name
         self._device = None

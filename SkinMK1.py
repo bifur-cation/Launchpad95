@@ -1,8 +1,45 @@
+"""
+SkinMK1.py — Complete colour skin for Launchpad MK1 / Mini / S hardware.
+
+Defines a ``Colors`` class hierarchy that maps every logical UI state to an
+``Rgb`` colour value from ``ColorsMK1.Rgb``.  MK1 uses a 2-bit palette:
+OFF, GREEN (third/half/full), RED (third/half/full), AMBER (third/half/full),
+and ORANGE/MANDARIN/LIME variants.
+
+The ``make_skin()`` factory wraps ``Colors`` in a ``_Framework.Skin`` instance
+so that skin keys like ``"Session.ClipStarted"`` can be resolved by
+``ConfigurableButtonElement`` at runtime.
+
+Top-level nested classes
+------------------------
+DefaultButton   — Generic button on/off/disabled states.
+Mode            — Mode-button colours for each primary/sub mode.
+Session         — Clip-slot and scene colours for the session grid.
+ProSession      — Pro Session mode clip colours and action buttons.
+LaunchQuant     — Launch quantization indicator colours.
+FixedLength     — Fixed-length record indicator colours.
+Metronome       — Metronome and tempo-nudge colours.
+RecQuant        — Recording quantization indicator colours.
+Zooming         — Session overview zoom button colours.
+Mixer           — Mixer strip button colours (arm/solo/mute/volume/pan/sends).
+Sends           — Per-send-slot availability indicator colours (A-H).
+Device          — Device controller colours (bank/lock/sliders/toggle/enum).
+StepSequencer   — Drum step sequencer colours (notes, loop, quantisation, editor).
+StepSequencer2  — Melodic step sequencer colours (pitch/octave/velocity/length).
+Recording       — Transport recording indicator.
+TrackController — Single-track controller button colours.
+DrumGroup       — Drum-rack pad colours.
+Note            — Instrument mode note pad colours.
+Scale           — Scale editor matrix colours.
+QuickScale      — Quick-scale overlay colours (major/minor/other + note repeater).
+"""
+
 from _Framework.Skin import Skin
 from .ColorsMK1 import Rgb
 
 
 class Colors:
+    """Nested colour hierarchy for the MK1 skin; passed directly to ``Skin()``."""
     class DefaultButton:
         On = Rgb.GREEN
         Off = Rgb.GREEN_THIRD
@@ -600,4 +637,10 @@ class Colors:
 
 
 def make_skin():
+    """
+    Create and return a ``Skin`` instance for MK1/Mini/S hardware.
+
+    Returns:
+        Skin: A ``_Framework.Skin`` wrapping the ``Colors`` class hierarchy.
+    """
     return Skin(Colors)
