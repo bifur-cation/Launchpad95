@@ -19,7 +19,7 @@ from _Framework.Capabilities import (
     controller_id, inport, outport
 )
 from .Launchpad import Launchpad
-
+from .LaunchpadWrapper import LaunchpadWrapper
 
 def create_instance(c_instance):
     """

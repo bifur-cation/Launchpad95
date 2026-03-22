@@ -966,18 +966,18 @@ def _run_demo() -> None:
             note_names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
             name = note_names[info.note % 12] if info.valid else "?"
             print(f"  Pad ({row},{col}) -> MIDI {info.note} ({name})")
-            lp.blink(row, col, Mk2Color.WHITE)
+            lp.blink(row, col, Mk1Color.GREEN)
 
     def on_release(row: int, col: int) -> None:
         if row >= 0 and col < 8:
             # Restore scale colour
             info = grid.note_at(row, col)
             if info.is_root:
-                color = Mk2Color.BLUE
+                color = Mk1Color.AMBER
             elif info.valid:
-                color = Mk2Color.LIGHT_BLUE
+                color = Mk1Color.YELLOW
             else:
-                color = Mk2Color.OFF
+                color = Mk1Color.OFF
             lp.set_led(row, col, color)
 
     lp.on_button_press(on_press)
@@ -986,19 +986,19 @@ def _run_demo() -> None:
     # Animate a sine-wave mixer in the background
     stop_event = threading.Event()
 
-    def animate_mixer() -> None:
-        phase = 0.0
-        while not stop_event.is_set():
-            values = [
-                0.5 + 0.5 * math.sin(phase + col * 0.8)
-                for col in range(8)
-            ]
-            lp.draw_mixer(values)
-            phase += 0.15
-            time.sleep(0.05)
+    # def animate_mixer() -> None:
+    #     phase = 0.0
+    #     while not stop_event.is_set():
+    #         values = [
+    #             0.5 + 0.5 * math.sin(phase + col * 0.8)
+    #             for col in range(8)
+    #         ]
+    #         lp.draw_mixer(values)
+    #         phase += 0.15
+    #         time.sleep(0.05)
 
-    mixer_thread = threading.Thread(target=animate_mixer, daemon=True)
-    mixer_thread.start()
+    # mixer_thread = threading.Thread(target=animate_mixer, daemon=True)
+    # mixer_thread.start()
 
     try:
         lp.run(blocking=True)
