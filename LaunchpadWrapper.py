@@ -261,19 +261,31 @@ class ScaleGrid:
     """
 
     def __init__(self, scale_name: str = "Major", root: int = 0, octave: int = 4,
-                 row_interval: int = _DIATONIC_ROW_INTERVAL):
+                 row_interval: int = _DIATONIC_ROW_INTERVAL,
+                 intervals: Optional[List[int]] = None):
         """
         Initialise the scale grid.
 
         Args:
-            scale_name: Key into ``BUILTIN_SCALES``.  Defaults to ``"Major"``.
-            root:       Root semitone 0-11 (0=C).  Defaults to 0.
-            octave:     Base octave number.  Defaults to 4 (middle C).
+            scale_name:   Key into ``BUILTIN_SCALES``.  Defaults to ``"Major"``.
+                          Ignored when ``intervals`` is provided.
+            root:         Root semitone 0-11 (0=C).  Defaults to 0.
+            octave:       Base octave number.  Defaults to 4 (middle C).
             row_interval: Scale degrees between adjacent rows.  Defaults to 2.
+            intervals:    Optional explicit semitone-interval list (e.g.
+                          ``[0, 2, 4, 5, 7, 9, 11]``).  When provided,
+                          ``scale_name`` is ignored and the grid is built
+                          directly from these intervals.
         """
         self._row_interval = row_interval
         self._highlight: Optional[int] = None
-        self.set_scale(scale_name, root, octave)
+        if intervals is not None:
+            self._scale_name = "Custom"
+            self._scale      = intervals
+            self._root       = root % 12
+            self._octave     = octave
+        else:
+            self.set_scale(scale_name, root, octave)
 
     def set_scale(self, scale_name: str, root: int = 0, octave: int = 4) -> None:
         """
@@ -343,6 +355,486 @@ class ScaleGrid:
             is_root=is_root,
             is_highlight=is_highlight,
             valid=valid,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Scale editor — Launchpad95 scale/key/mode UI emulation
+# ---------------------------------------------------------------------------
+
+# Chromatic note names (index 0 = C)
+_SE_KEY_NAMES: List[str] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+]
+
+# Circle of fifths: step by a perfect fifth (7 semitones) each time
+_SE_CIRCLE_OF_FIFTHS: List[int] = [7 * k % 12 for k in range(12)]
+
+# White-key semitone offsets for C D E F G A B (indices 0–6)
+_SE_WHITE_KEYS: List[int] = [0, 2, 4, 5, 7, 9, 11]
+
+# Maximum octave index for each layout mode (mirrors ScaleComponent.TOP_OCTAVE)
+_SE_TOP_OCTAVE: Dict[str, int] = {
+    "chromatic_gtr":   7,
+    "diatonic_ns":     2,
+    "diatonic_chords": 7,
+    "diatonic":        6,
+    "chromatic":       7,
+}
+
+# Scale mode table: (name, semitone-interval list).
+# Index ordering mirrors Ableton Live's ``get_all_scales_ordered()`` so that
+# indices 1, 11, 12, 13, 14 match the relative-scale logic in ScaleComponent.
+SCALE_MODES: List[Tuple[str, List[int]]] = [
+    ("Major",             [0, 2, 4, 5, 7, 9, 11]),                      # 0  Ionian
+    ("Minor",             [0, 2, 3, 5, 7, 8, 10]),                      # 1  Aeolian / Natural Minor
+    ("Dorian",            [0, 2, 3, 5, 7, 9, 10]),                      # 2
+    ("Phrygian",          [0, 1, 3, 5, 7, 8, 10]),                      # 3
+    ("Lydian",            [0, 2, 4, 6, 7, 9, 11]),                      # 4
+    ("Mixolydian",        [0, 2, 4, 5, 7, 9, 10]),                      # 5
+    ("Locrian",           [0, 1, 3, 5, 6, 8, 10]),                      # 6
+    ("Diminished",        [0, 2, 3, 5, 6, 8, 9, 11]),                   # 7  whole-half
+    ("Whole Tone",        [0, 2, 4, 6, 8, 10]),                         # 8
+    ("Half-Whole Dim",    [0, 1, 3, 4, 6, 7, 9, 10]),                   # 9
+    ("Blues",             [0, 3, 5, 6, 7, 10]),                         # 10
+    ("Minor Pentatonic",  [0, 3, 5, 7, 10]),                            # 11
+    ("Major Pentatonic",  [0, 2, 4, 7, 9]),                             # 12
+    ("Harmonic Minor",    [0, 2, 3, 5, 7, 8, 11]),                      # 13
+    ("Melodic Minor",     [0, 2, 3, 5, 7, 9, 11]),                      # 14
+    ("Chromatic",         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),     # 15
+]
+
+
+class ScaleEditorColorsMK2:
+    """
+    Mk2Color palette indices for each scale-editor UI element.
+
+    Mirrors ``Colors.Scale`` in ``SkinMK2.py``.
+
+    Colour reference (MK2 palette index → hue):
+        5  = RED, 7  = RED_THIRD, 9  = AMBER, 11 = AMBER_THIRD,
+        21 = GREEN, 23 = GREEN_THIRD, 45 = BLUE, 47 = BLUE_THIRD.
+    """
+    KEY_ON          = 21   # GREEN
+    KEY_OFF         = 23   # GREEN_THIRD
+    ABS_ROOT_ON     = 5    # RED
+    ABS_ROOT_OFF    = 7    # RED_THIRD
+    HORIZONTAL_ON   = 21   # GREEN
+    HORIZONTAL_OFF  = 23   # GREEN_THIRD
+    MODE_ON         = 5    # RED
+    MODE_OFF        = 7    # RED_THIRD
+    CIRCLE_5THS     = 45   # BLUE
+    RELATIVE_SCALE  = 45   # BLUE
+    OCTAVE_ON       = 5    # RED
+    OCTAVE_OFF      = 7    # RED_THIRD
+    MODUS_ON        = 45   # BLUE
+    MODUS_OFF       = 47   # BLUE_THIRD
+    QUICK_SCALE_ON  = 9    # AMBER
+    QUICK_SCALE_OFF = 11   # AMBER_THIRD
+    DISABLED        = 0    # BLACK
+
+
+class ScaleEditorColorsMK1:
+    """
+    Mk1Color velocity-byte values for each scale-editor UI element.
+
+    Mirrors ``Colors.Scale`` in ``SkinMK1.py``.
+
+    Encoding: ``bits[5:4]`` = green intensity (0–3),
+              ``bits[1:0]`` = red intensity (0–3),
+              ``bits[3:2]`` = 0b11 (copy/clear flag).
+    """
+    KEY_ON          = 0x1F  # AMBER        (green=1, red=3)
+    KEY_OFF         = 0x1D  # LOW_AMBER    (green=1, red=1)
+    ABS_ROOT_ON     = 0x1F  # AMBER
+    ABS_ROOT_OFF    = 0x1D  # LOW_AMBER
+    HORIZONTAL_ON   = 0x3C  # GREEN        (LIME proxy; green=3, red=0)
+    HORIZONTAL_OFF  = 0x1F  # AMBER        (MANDARIN proxy)
+    MODE_ON         = 0x0F  # RED          (green=0, red=3)
+    MODE_OFF        = 0x0D  # LOW_RED      (green=0, red=1)
+    CIRCLE_5THS     = 0x0F  # RED
+    RELATIVE_SCALE  = 0x0F  # RED
+    OCTAVE_ON       = 0x0F  # RED
+    OCTAVE_OFF      = 0x0D  # LOW_RED
+    MODUS_ON        = 0x3C  # GREEN
+    MODUS_OFF       = 0x1C  # LOW_GREEN    (green=1, red=0)
+    QUICK_SCALE_ON  = 0x1F  # AMBER
+    QUICK_SCALE_OFF = 0x1D  # LOW_AMBER
+    DISABLED        = 0x0C  # OFF
+
+
+class ScaleEditorMode:
+    """
+    Emulates the Launchpad95 Ableton scale-editor UI on a standalone Launchpad.
+
+    The 8×8 grid becomes a scale / key / mode selector identical to the
+    ``ScaleComponent`` in the Ableton Remote Script::
+
+        Row 0: [abs_root][horizontal][chromatic_gtr][diatonic_ns]
+               [diatonic_chords][diatonic][chromatic][drumrack]
+        Row 1: [C#][D#][rel_scale][F#][G#][A#][<-5ths][quick_scale]
+        Row 2: [C][D][E][F][G][A][B][5ths->]
+        Row 3: [oct0][oct1]...[oct{top-1}]  (disabled beyond top_octave)
+        Row 4: [mode 0][mode 1]...[mode 7]
+        Row 5: [mode 8]...[mode 15]
+        Row 6: [mode 16]...[mode 23]
+        Row 7: [mode 24]...[mode 31]
+
+    **Typical usage**::
+
+        editor = ScaleEditorMode(key=0, octave=3, modus=0)
+        lp.run_scale_editor(editor)        # draws + blocks; Ctrl-C to stop
+
+        # After returning, use the result to light the instrument grid:
+        grid = editor.get_scale_grid()
+        lp.color_scale_grid(grid)
+
+    Attributes:
+        key (int):            Root note 0–11 (0 = C).
+        octave (int):         Octave register index (0 to top_octave − 1).
+        modus (int):          Index into :data:`SCALE_MODES`.
+        mode (str):           Layout mode; one of the :data:`_SE_TOP_OCTAVE`
+                              keys or ``"drumrack"``.
+        is_absolute (bool):   Absolute root-anchoring toggle.
+        is_horizontal (bool): Horizontal layout toggle.
+        quick_scale (bool):   Quick-scale overlay toggle.
+        on_change (callable): Optional ``callback(editor)`` fired on every
+                              state change (key, octave, modus, mode, toggles).
+    """
+
+    def __init__(
+        self,
+        key: int = 0,
+        octave: int = 3,
+        modus: int = 0,
+        mode: str = "diatonic",
+        is_absolute: bool = False,
+        is_horizontal: bool = True,
+        on_change: Optional[Callable] = None,
+    ):
+        """
+        Args:
+            key:           Root note semitone 0–11 (0 = C).
+            octave:        Initial octave register (0 to top_octave − 1).
+            modus:         Initial scale mode index into :data:`SCALE_MODES`.
+            mode:          Initial layout mode (see :data:`_SE_TOP_OCTAVE`).
+            is_absolute:   Start with absolute root anchoring enabled.
+            is_horizontal: Start with horizontal layout enabled.
+            on_change:     Optional ``callback(editor)`` called after any
+                           state change.
+        """
+        self.key            = key % 12
+        self.modus          = modus
+        self.mode           = mode
+        self.is_absolute    = is_absolute
+        self.is_horizontal  = is_horizontal
+        self.quick_scale    = False
+        self.on_change      = on_change
+
+        self._top_octave    = _SE_TOP_OCTAVE.get(mode, 6)
+        self.octave         = max(0, min(octave, self._top_octave - 1))
+
+        # State for relative-scale button (row 1, col 2)
+        self._current_minor_mode = 1          # Natural Minor by default
+        self._minor_modes        = [1, 13, 14]  # Natural, Harmonic, Melodic
+
+    # ------------------------------------------------------------------
+    # Read-only convenience properties
+    # ------------------------------------------------------------------
+
+    @property
+    def scale_name(self) -> str:
+        """Name of the currently selected scale mode (e.g. ``"Major"``)."""
+        return SCALE_MODES[self.modus][0]
+
+    @property
+    def scale_intervals(self) -> List[int]:
+        """Semitone intervals for the current scale mode."""
+        return SCALE_MODES[self.modus][1]
+
+    @property
+    def key_name(self) -> str:
+        """Name of the root note (e.g. ``"C#"``)."""
+        return _SE_KEY_NAMES[self.key]
+
+    @property
+    def _is_drumrack(self) -> bool:
+        return self.mode == "drumrack"
+
+    @property
+    def _is_diatonic(self) -> bool:
+        return self.mode in ("diatonic", "diatonic_ns", "diatonic_chords")
+
+    # ------------------------------------------------------------------
+    # State mutators
+    # ------------------------------------------------------------------
+
+    def set_key(self, key: int) -> None:
+        """Set the root note (0–11)."""
+        if 0 <= key <= 11:
+            self.key = key
+            self._notify()
+
+    def set_octave(self, octave: int) -> None:
+        """Set the octave register (clamped to valid range for current mode)."""
+        if 0 <= octave < self._top_octave:
+            self.octave = octave
+            self._notify()
+
+    def octave_up(self) -> None:
+        """Shift the register up by one octave."""
+        self.set_octave(self.octave + 1)
+
+    def octave_down(self) -> None:
+        """Shift the register down by one octave."""
+        self.set_octave(self.octave - 1)
+
+    def set_modus(self, index: int) -> None:
+        """Select a scale mode by index into :data:`SCALE_MODES`."""
+        if 0 <= index < len(SCALE_MODES):
+            self.modus = index
+            self._notify()
+
+    def set_mode(self, mode: str) -> None:
+        """
+        Set the layout mode and update the valid octave range.
+
+        Args:
+            mode: One of ``"diatonic"``, ``"diatonic_ns"``,
+                  ``"diatonic_chords"``, ``"chromatic"``,
+                  ``"chromatic_gtr"``, or ``"drumrack"``.
+        """
+        self.mode        = mode
+        self._top_octave = _SE_TOP_OCTAVE.get(mode, 6)
+        if self.octave >= self._top_octave:
+            self.octave = self._top_octave - 1
+        self._notify()
+
+    def shift_fifth_up(self) -> None:
+        """Move one step clockwise on the circle of fifths (+7 semitones)."""
+        idx      = _SE_CIRCLE_OF_FIFTHS.index(self.key)
+        self.key = _SE_CIRCLE_OF_FIFTHS[(idx + 1) % 12]
+        self._notify()
+
+    def shift_fifth_down(self) -> None:
+        """Move one step counter-clockwise on the circle of fifths (−7 semitones)."""
+        idx      = _SE_CIRCLE_OF_FIFTHS.index(self.key)
+        self.key = _SE_CIRCLE_OF_FIFTHS[(idx - 1 + 12) % 12]
+        self._notify()
+
+    def _notify(self) -> None:
+        if self.on_change:
+            self.on_change(self)
+
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
+
+    def draw(self, lp: "LaunchpadWrapper") -> None:
+        """
+        Render the scale-editor UI onto the Launchpad 8×8 grid.
+
+        Mirrors ``ScaleComponent.update()`` from the Ableton Remote Script.
+        Call after any state change, or use :meth:`LaunchpadWrapper.run_scale_editor`
+        which wires this automatically.
+
+        Args:
+            lp: Connected :class:`LaunchpadWrapper` instance.
+        """
+        c         = ScaleEditorColorsMK1 if lp.model == HardwareModel.MK1 else ScaleEditorColorsMK2
+        num_modes = len(SCALE_MODES)
+        for row in range(8):
+            for col in range(8):
+                lp.set_led(row, col, self._cell_color(row, col, c, num_modes))
+
+    def _cell_color(self, row: int, col: int, c, num_modes: int) -> int:
+        """Return the LED color index for pad ``(row, col)`` given current state."""
+
+        # --- Row 0: layout-mode toggle buttons ---
+        if row == 0:
+            if col == 0:
+                return c.ABS_ROOT_ON    if self.is_absolute   else c.ABS_ROOT_OFF
+            if col == 1:
+                return c.HORIZONTAL_ON  if self.is_horizontal else c.HORIZONTAL_OFF
+            if col == 2:
+                return c.MODE_ON if (not self._is_drumrack and self.mode == "chromatic_gtr")   else c.MODE_OFF
+            if col == 3:
+                return c.MODE_ON if (not self._is_drumrack and self.mode == "diatonic_ns")     else c.MODE_OFF
+            if col == 4:
+                return c.MODE_ON if (not self._is_drumrack and self.mode == "diatonic_chords") else c.MODE_OFF
+            if col == 5:
+                return c.MODE_ON if (not self._is_drumrack and self.mode == "diatonic")        else c.MODE_OFF
+            if col == 6:
+                return c.MODE_ON if (not self._is_drumrack and self.mode == "chromatic")       else c.MODE_OFF
+            # col == 7: drumrack button
+            return c.MODE_ON if self._is_drumrack else c.MODE_OFF
+
+        # --- Row 1: black keys / circle-of-5ths ← / relative-scale / quick-scale ---
+        if row == 1:
+            if self._is_drumrack:
+                return c.QUICK_SCALE_ON if (col == 7 and self.quick_scale) else (
+                    c.QUICK_SCALE_OFF if col == 7 else c.DISABLED
+                )
+            if col in (0, 1, 3, 4, 5):   # C#  D#  [gap]  F#  G#  A#
+                return c.KEY_ON if self.key == _SE_WHITE_KEYS[col] + 1 else c.KEY_OFF
+            if col == 2:
+                return c.RELATIVE_SCALE
+            if col == 6:
+                return c.CIRCLE_5THS
+            # col == 7
+            return c.QUICK_SCALE_ON if self.quick_scale else c.QUICK_SCALE_OFF
+
+        # --- Row 2: white keys / circle-of-5ths → ---
+        if row == 2:
+            if self._is_drumrack:
+                return c.DISABLED
+            if col < 7:               # C  D  E  F  G  A  B
+                return c.KEY_ON if self.key == _SE_WHITE_KEYS[col] else c.KEY_OFF
+            return c.CIRCLE_5THS      # col == 7
+
+        # --- Row 3: octave selector ---
+        if row == 3:
+            if self.octave == col:
+                return c.OCTAVE_ON
+            return c.OCTAVE_OFF if col < self._top_octave else c.DISABLED
+
+        # --- Rows 4–7: scale mode (modus) selector, 8 per row ---
+        if not self._is_drumrack:
+            mode_idx = (row - 4) * 8 + col
+            if mode_idx < num_modes:
+                return c.MODUS_ON if self.modus == mode_idx else c.MODUS_OFF
+        return c.DISABLED
+
+    # ------------------------------------------------------------------
+    # Input handling
+    # ------------------------------------------------------------------
+
+    def handle_press(self, lp: "LaunchpadWrapper", row: int, col: int) -> None:
+        """
+        Process a single pad press and update internal state.
+
+        Mirrors ``ScaleComponent._matrix_pressed()`` from the Ableton Remote
+        Script.  Called automatically when the editor is active via
+        :meth:`LaunchpadWrapper.run_scale_editor`; also callable directly.
+
+        Args:
+            lp:  :class:`LaunchpadWrapper` used for LED feedback after update.
+            row: Pressed pad row 0–7.
+            col: Pressed pad column 0–7.
+        """
+        # --- Row 0: layout-mode selection ---
+        if row == 0:
+            if not self._is_drumrack:
+                if col == 0:
+                    self.is_absolute   = not self.is_absolute
+                if col == 1 and self._is_diatonic:
+                    self.is_horizontal = not self.is_horizontal
+            if   col == 2:
+                self.mode          = "chromatic_gtr"
+                self.is_horizontal = True
+            elif col == 3:
+                self.mode          = "diatonic_ns"
+                self.is_horizontal = True
+            elif col == 4:
+                self.mode          = "diatonic_chords"
+                self.is_horizontal = False
+            elif col == 5:
+                self.mode          = "diatonic"
+                self.is_horizontal = True
+            elif col == 6:
+                self.mode          = "chromatic"
+                self.is_horizontal = True
+            elif col == 7:
+                self.mode          = "drumrack"
+            self._top_octave = _SE_TOP_OCTAVE.get(self.mode, 6)
+            if self.octave >= self._top_octave:
+                self.octave = self._top_octave - 1
+
+        # --- Rows 1–2: root note, circle of fifths, relative scale ---
+        if not self._is_drumrack:
+            root      = -1
+            new_modus = self.modus
+
+            if row == 2 and col < 7:                      # white keys: C D E F G A B
+                root = _SE_WHITE_KEYS[col]
+            elif row == 1 and col in (0, 1, 3, 4, 5):    # black keys: C# D# F# G# A#
+                root = _SE_WHITE_KEYS[col] + 1
+            elif row == 2 and col == 7:                   # circle of fifths →
+                root = _SE_CIRCLE_OF_FIFTHS[
+                    (_SE_CIRCLE_OF_FIFTHS.index(self.key) + 1) % 12
+                ]
+            elif row == 1 and col == 6:                   # circle of fifths ←
+                root = _SE_CIRCLE_OF_FIFTHS[
+                    (_SE_CIRCLE_OF_FIFTHS.index(self.key) - 1 + 12) % 12
+                ]
+            elif row == 1 and col == 2:                   # relative-scale toggle
+                if self.modus == 0:                           # Major → relative minor
+                    new_modus = self._current_minor_mode
+                    root = _SE_CIRCLE_OF_FIFTHS[
+                        (_SE_CIRCLE_OF_FIFTHS.index(self.key) + 3) % 12
+                    ]
+                elif self.modus in (1, 13, 14):               # minor variants → relative major
+                    self._current_minor_mode = self.modus
+                    new_modus = 0
+                    root = _SE_CIRCLE_OF_FIFTHS[
+                        (_SE_CIRCLE_OF_FIFTHS.index(self.key) - 3 + 12) % 12
+                    ]
+                elif self.modus == 11:                        # Minor Pentatonic ↔ Major Pentatonic
+                    new_modus = 12
+                    root = _SE_CIRCLE_OF_FIFTHS[
+                        (_SE_CIRCLE_OF_FIFTHS.index(self.key) - 3 + 12) % 12
+                    ]
+                elif self.modus == 12:
+                    new_modus = 11
+                    root = _SE_CIRCLE_OF_FIFTHS[
+                        (_SE_CIRCLE_OF_FIFTHS.index(self.key) + 3) % 12
+                    ]
+
+            if root != -1:
+                self.modus = new_modus
+                self.key   = root
+
+        # --- Row 1, col 7: quick-scale toggle ---
+        if row == 1 and col == 7:
+            self.quick_scale = not self.quick_scale
+
+        # --- Row 3: octave selector ---
+        if row == 3 and 0 <= col < self._top_octave:
+            self.octave = col
+
+        # --- Rows 4–7: scale mode (modus) selector ---
+        if row >= 4 and not self._is_drumrack:
+            mode_idx = (row - 4) * 8 + col
+            if 0 <= mode_idx < len(SCALE_MODES):
+                self.modus = mode_idx
+
+        self._notify()
+        self.draw(lp)
+
+    # ------------------------------------------------------------------
+    # ScaleGrid factory
+    # ------------------------------------------------------------------
+
+    def get_scale_grid(self, row_interval: int = 3) -> "ScaleGrid":
+        """
+        Build a :class:`ScaleGrid` from the current editor state.
+
+        The grid uses the current root note, scale intervals, and octave
+        register.  Pass it to :meth:`LaunchpadWrapper.color_scale_grid` to
+        light up playable notes in the instrument layout.
+
+        Args:
+            row_interval: Scale degrees between adjacent rows (default 3,
+                          matching ``ScaleComponent._interval``).
+
+        Returns:
+            :class:`ScaleGrid` configured for the current scale/key/octave.
+        """
+        return ScaleGrid(
+            intervals=self.scale_intervals,
+            root=self.key,
+            octave=self.octave,
+            row_interval=row_interval,
         )
 
 
@@ -803,6 +1295,44 @@ class LaunchpadWrapper:
     # MIDI listener
     # ------------------------------------------------------------------
 
+    def run_scale_editor(
+        self,
+        editor: "ScaleEditorMode",
+        blocking: bool = True,
+    ) -> None:
+        """
+        Activate the scale-editor UI: draw it and register pad callbacks.
+
+        Every pad press on the 8×8 grid is routed to
+        :meth:`ScaleEditorMode.handle_press`, which updates the editor state
+        and redraws automatically.  To deactivate, call
+        :meth:`clear_callbacks` (and optionally :meth:`clear`).
+
+        Example::
+
+            editor = ScaleEditorMode(key=0, octave=3, modus=0)
+            lp.run_scale_editor(editor)           # blocks until Ctrl-C
+            grid = editor.get_scale_grid()
+            lp.color_scale_grid(grid)             # show result on instrument
+
+        Args:
+            editor:   :class:`ScaleEditorMode` instance to activate.
+            blocking: If ``True`` (default), calls :meth:`run` to block until
+                      ``Ctrl+C`` or :meth:`disconnect`.  If ``False``, only
+                      draws and registers callbacks, then returns immediately
+                      (useful when calling :meth:`run` separately or running
+                      in a background thread).
+        """
+        editor.draw(self)
+
+        def _on_press(row: int, col: int) -> None:
+            if 0 <= row <= 7 and 0 <= col <= 7:
+                editor.handle_press(self, row, col)
+
+        self.on_button_press(_on_press)
+        if blocking:
+            self.run(blocking=True)
+
     def run(self, blocking: bool = True) -> None:
         """
         Start the MIDI input listener.
@@ -944,66 +1474,97 @@ class LaunchpadWrapper:
 
 def _run_demo() -> None:
     """
-    Interactive demo: scale-grid colouring, note feedback, animated mixer.
+    Two-phase interactive demo: scale editor + instrument play.
 
     Run with:  python LaunchpadWrapper.py
     Press Ctrl+C to stop.
+
+    Phase 1 — Scale Editor (starts here):
+        The full 8×8 grid shows the Launchpad95 scale/key/mode UI.
+        Use the pads to pick a root note, scale mode, octave, and layout.
+        Navigate the circle of fifths or jump to the relative scale.
+        Press the top-right automap button to switch to instrument mode.
+
+    Phase 2 — Instrument / Play:
+        The grid is recoloured by the scale chosen in Phase 1.
+        Press pads to see the MIDI note name printed in the console.
+        Press the top-right automap button again to return to the editor.
     """
     print("Connecting to Launchpad...")
-    lp = LaunchpadWrapper.connect(input_port="Launchpad 0")
+    lp = LaunchpadWrapper.connect()
     print(f"Connected: {lp.model}")
     lp.clear()
 
-    # Build a C Major scale grid
-    grid = ScaleGrid("Major", root=0, octave=4)
-    lp.color_scale_grid(grid)
-    print("Scale grid drawn (C Major).  Press pads to see notes.")
+    # Resolve per-hardware colour constants once
+    if lp.model == HardwareModel.MK1:
+        root_c, scale_c, off_c, press_c = (
+            Mk1Color.AMBER, Mk1Color.GREEN, Mk1Color.OFF, Mk1Color.YELLOW
+        )
+    else:
+        root_c, scale_c, off_c, press_c = (
+            Mk2Color.BLUE, Mk2Color.LIGHT_BLUE, Mk2Color.OFF, Mk2Color.WHITE
+        )
 
-    # On press: blink the pad and print the note
+    editor = ScaleEditorMode(key=0, octave=3, modus=0)
+    mode   = ["editor"]   # mutable cell: "editor" | "instrument"
+
+    def show_editor() -> None:
+        mode[0] = "editor"
+        lp.clear()
+        editor.draw(lp)
+        print(f"\n[Scale Editor]  {editor.key_name} {editor.scale_name}"
+              f"  oct={editor.octave}  layout={editor.mode}")
+        print("  Top-right automap button → instrument mode")
+
+    def show_instrument() -> None:
+        mode[0] = "instrument"
+        lp.clear()
+        lp.color_scale_grid(
+            editor.get_scale_grid(),
+            root_color=root_c,
+            in_scale_color=scale_c,
+            off_color=off_c,
+        )
+        print(f"\n[Instrument]  {editor.key_name} {editor.scale_name}"
+              f"  oct={editor.octave}  layout={editor.mode}")
+        print("  Press pads to see notes.  Top-right automap button → scale editor")
+
     def on_press(row: int, col: int) -> None:
-        if row >= 0 and col < 8:
-            info = grid.note_at(row, col)
-            note_names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
-            name = note_names[info.note % 12] if info.valid else "?"
-            print(f"  Pad ({row},{col}) -> MIDI {info.note} ({name})")
-            lp.blink(row, col, Mk1Color.GREEN)
+        # Top-right automap button toggles between editor and instrument
+        if row == -1 and col == 7:
+            if mode[0] == "editor":
+                show_instrument()
+            else:
+                show_editor()
+            return
+
+        if mode[0] == "editor":
+            if 0 <= row <= 7 and 0 <= col <= 7:
+                editor.handle_press(lp, row, col)
+                print(f"  {editor.key_name} {editor.scale_name}"
+                      f"  oct={editor.octave}  layout={editor.mode}")
+
+        elif mode[0] == "instrument":
+            if 0 <= row <= 7 and col < 8:
+                info = editor.get_scale_grid().note_at(row, col)
+                if info.valid:
+                    name = _SE_KEY_NAMES[info.note % 12]
+                    print(f"  Pad ({row},{col}) → MIDI {info.note} ({name})")
+                lp.set_led(row, col, press_c)
 
     def on_release(row: int, col: int) -> None:
-        if row >= 0 and col < 8:
-            # Restore scale colour
-            info = grid.note_at(row, col)
-            if info.is_root:
-                color = Mk1Color.AMBER
-            elif info.valid:
-                color = Mk1Color.YELLOW
-            else:
-                color = Mk1Color.OFF
-            lp.set_led(row, col, color)
+        if mode[0] == "instrument" and 0 <= row <= 7 and col < 8:
+            info = editor.get_scale_grid().note_at(row, col)
+            lp.set_led(row, col,
+                       root_c if info.is_root else (scale_c if info.valid else off_c))
 
     lp.on_button_press(on_press)
     lp.on_button_release(on_release)
-
-    # Animate a sine-wave mixer in the background
-    stop_event = threading.Event()
-
-    # def animate_mixer() -> None:
-    #     phase = 0.0
-    #     while not stop_event.is_set():
-    #         values = [
-    #             0.5 + 0.5 * math.sin(phase + col * 0.8)
-    #             for col in range(8)
-    #         ]
-    #         lp.draw_mixer(values)
-    #         phase += 0.15
-    #         time.sleep(0.05)
-
-    # mixer_thread = threading.Thread(target=animate_mixer, daemon=True)
-    # mixer_thread.start()
+    show_editor()
 
     try:
         lp.run(blocking=True)
     finally:
-        stop_event.set()
         lp.disconnect()
         print("Disconnected.")
 
