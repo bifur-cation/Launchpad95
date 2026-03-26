@@ -604,6 +604,18 @@ SCALE_MODES: List[Tuple[str, List[int]]] = [
     ("Harmonic Minor",    [0, 2, 3, 5, 7, 8, 11]),                      # 13
     ("Melodic Minor",     [0, 2, 3, 5, 7, 9, 11]),                      # 14
     ("Chromatic",         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),     # 15
+    # --- Row 6 (pad positions (6,0)–(6,7)) ---
+    ("Bhairav",           [0, 1, 4, 5, 7, 8, 11]),                    # 16
+    ("Hunga. Minor",      [0, 2, 3, 6, 7, 8, 11]),                    # 17  Hungarian Minor
+    ("Minor Gypsy",       [0, 1, 4, 5, 7, 8, 10]),                    # 18
+    ("Hirojoshi",         [0, 2, 3, 7, 8]),                            # 19
+    ("In-Sen",            [0, 1, 5, 7, 10]),                           # 20
+    ("Iwato",             [0, 1, 5, 6, 10]),                           # 21
+    ("Kumoi",             [0, 2, 3, 7, 9]),                            # 22
+    ("Pelog",             [0, 1, 3, 7, 8]),                            # 23
+    # --- Row 7 (pad positions (7,0)–(7,1)) ---
+    ("Spanish",           [0, 1, 3, 4, 5, 7, 8, 10]),                 # 24  Spanish Phrygian / Jewish
+    ("IonEol",            [0, 2, 4, 5, 7, 8, 9, 11]),                 # 25  Ionian / Aeolian mixed
 ]
 
 
