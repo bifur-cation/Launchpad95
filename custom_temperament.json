@@ -1,0 +1,18 @@
+{
+    "_comment": "Custom temperament definition. Each value is a cent offset from 12-tone equal temperament. Positive values sharpen the note; negative values flatten it. A4 reference frequency can also be changed.",
+    "reference_freq": 440.0,
+    "cent_offsets": {
+        "C": 0.0,
+        "C#": 0.0,
+        "D": 0.0,
+        "D#": 0.0,
+        "E": 0.0,
+        "F": 0.0,
+        "F#": 0.0,
+        "G": 0.0,
+        "G#": 0.0,
+        "A": 0.0,
+        "A#": 0.0,
+        "B": 0.0
+    }
+}
