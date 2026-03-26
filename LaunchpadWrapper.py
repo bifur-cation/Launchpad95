@@ -1740,9 +1740,16 @@ def _run_demo() -> None:
             in_scale_color=scale_c,
             off_color=off_c,
         )
+        # Light top-row controls: octave dn/up, fifths left/right
+        if lp.model == HardwareModel.MK1:
+            ctrl_c = Mk1Color.GREEN
+        else:
+            ctrl_c = Mk2Color.ORANGE
+        for c_col in range(4):
+            lp.set_led(-1, c_col, ctrl_c)
         print(f"\n[Instrument]  {editor.key_name} {editor.scale_name}"
               f"  oct={editor.octave}  layout={editor.mode}")
-        print("  Press pads to see notes.  Top-right automap button → scale editor")
+        print("  Top buttons: [oct-][oct+][5th-L][5th-R]  ...  [editor]")
 
     def on_press(row: int, col: int) -> None:
         # Top-right automap button toggles between editor and instrument
@@ -1760,6 +1767,22 @@ def _run_demo() -> None:
                       f"  oct={editor.octave}  layout={editor.mode}")
 
         elif mode[0] == "instrument":
+            # Top-row controls in instrument mode
+            if row == -1:
+                if col == 0:
+                    editor.octave_up()
+                elif col == 1:
+                    editor.octave_down()
+                elif col == 2:
+                    editor.shift_fifth_down()
+                elif col == 3:
+                    editor.shift_fifth_up()
+                else:
+                    return
+                # Refresh the grid and status line
+                show_instrument()
+                return
+
             if 0 <= row <= 7 and col < 8:
                 info = editor.get_scale_grid().note_at(row, col)
                 if info.valid:
