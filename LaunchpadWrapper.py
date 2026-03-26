@@ -1779,8 +1779,8 @@ def _run_demo() -> None:
                     editor.shift_fifth_up()
                 else:
                     return
-                # Refresh the grid and status line
-                show_instrument()
+                print(f"  {editor.key_name} {editor.scale_name}"
+                      f"  oct={editor.octave}")
                 return
 
             if 0 <= row <= 7 and col < 8:
