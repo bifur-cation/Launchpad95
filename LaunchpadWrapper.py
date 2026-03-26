@@ -28,6 +28,8 @@ Mixer bars:
     lp.draw_mixer([0.2, 0.5, 0.8, 1.0, 0.6, 0.3, 0.7, 0.4])
 """
 
+import json
+import os
 import threading
 import time
 import math
@@ -231,6 +233,7 @@ class NoteInfo:
     is_root:      bool
     is_highlight: bool
     valid:        bool
+    hz:           Optional[float] = None
 
 
 class ScaleGrid:
@@ -326,13 +329,16 @@ class ScaleGrid:
                     result.append(n)
         return result
 
-    def note_at(self, row: int, col: int) -> NoteInfo:
+    def note_at(self, row: int, col: int,
+                tuning: Optional["Temperament"] = None) -> NoteInfo:
         """
         Return the ``NoteInfo`` for pad at ``(row, col)``.
 
         Args:
-            row: Pad row 0 (top) to 7 (bottom).
-            col: Pad column 0 (left) to 7 (right).
+            row:    Pad row 0 (top) to 7 (bottom).
+            col:    Pad column 0 (left) to 7 (right).
+            tuning: Optional :class:`Temperament` instance.  When provided,
+                    ``NoteInfo.hz`` is set to the note's frequency.
 
         Returns:
             ``NoteInfo`` describing the MIDI note and its scale membership.
@@ -349,23 +355,226 @@ class ScaleGrid:
         is_root = valid and (note % 12 == self._root % 12)
         is_in_scale = valid  # by construction all notes in grid are in-scale
         is_highlight = (self._highlight is not None and degree == self._highlight)
+        midi = note if valid else -1
+        hz = tuning.frequency(midi) if (tuning is not None and valid) else None
         return NoteInfo(
-            note=note if valid else -1,
+            note=midi,
             in_scale=is_in_scale,
             is_root=is_root,
             is_highlight=is_highlight,
             valid=valid,
+            hz=hz,
         )
+
+
+# ---------------------------------------------------------------------------
+# Temperament / tuning system
+# ---------------------------------------------------------------------------
+
+# Chromatic note names (index 0 = C)
+NOTE_NAMES: List[str] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+]
+
+# Reference pitch: A4 = MIDI note 69
+_A4_MIDI = 69
+_A4_FREQ = 440.0
+
+# Just Intonation ratios (5-limit, relative to the root of each octave)
+_JUST_RATIOS: List[float] = [
+    1/1,      # unison
+    16/15,    # minor second
+    9/8,      # major second
+    6/5,      # minor third
+    5/4,      # major third
+    4/3,      # perfect fourth
+    45/32,    # augmented fourth / tritone
+    3/2,      # perfect fifth
+    8/5,      # minor sixth
+    5/3,      # major sixth
+    9/5,      # minor seventh
+    15/8,     # major seventh
+]
+
+# Vallotti temperament: cent offsets from 12-TET for each pitch class (C=0..B=11).
+# Vallotti is a well-temperament with pure fifths on F-C-G-D-A-E and
+# tempered fifths on B-F#-C#-G#-D#-A#.
+_VALLOTTI_CENTS: List[float] = [
+    0.0,      # C
+    -5.9,     # C#
+    -3.9,     # D
+    -2.0,     # D#
+    -7.8,     # E
+    +2.0,     # F
+    -3.9,     # F#
+    -2.0,     # G
+    -3.9,     # G#
+    -5.9,     # A
+    0.0,      # A#
+    -5.9,     # B
+]
+
+# Default path for the custom temperament JSON file
+_CUSTOM_TEMPERAMENT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "custom_temperament.json"
+)
+
+
+class Temperament:
+    """
+    Maps MIDI note numbers to frequencies using a chosen tuning system.
+
+    Supported built-in temperaments:
+        - ``"equal"``  — 12-tone equal temperament (default)
+        - ``"just"``   — 5-limit just intonation (relative to A4=440 Hz)
+        - ``"vallotti"`` — Vallotti well-temperament
+        - ``"custom"`` — Loaded from a JSON file (see ``custom_temperament.json``)
+
+    Usage::
+
+        t = Temperament("equal")
+        t.frequency(69)          # 440.0
+        t.note_display(69)       # "A4, 440.00Hz"
+
+        t = Temperament("just")
+        t.frequency(60)          # ~261.63 (C4 in just intonation)
+
+        t = Temperament("custom", path="my_tuning.json")
+    """
+
+    BUILTIN = ("equal", "just", "vallotti", "custom")
+
+    def __init__(self, name: str = "equal", *,
+                 reference_freq: float = _A4_FREQ,
+                 custom_path: Optional[str] = None):
+        """
+        Args:
+            name:           Temperament name (one of ``BUILTIN``).
+            reference_freq: Reference frequency for A4 in Hz.  Defaults to 440.
+            custom_path:    Path to custom temperament JSON file.  Only used
+                            when ``name="custom"``.  Defaults to
+                            ``custom_temperament.json`` beside this script.
+        """
+        self.name = name.lower()
+        self.reference_freq = reference_freq
+        self._custom_path = custom_path or _CUSTOM_TEMPERAMENT_PATH
+
+        if self.name not in self.BUILTIN:
+            raise ValueError(
+                f"Unknown temperament '{name}'. Available: {self.BUILTIN}")
+
+        # Pre-compute cent offsets for each pitch class (0-11) relative to 12-TET
+        self._cent_offsets: List[float] = [0.0] * 12
+        if self.name == "just":
+            self._cent_offsets = self._just_cents()
+        elif self.name == "vallotti":
+            self._cent_offsets = list(_VALLOTTI_CENTS)
+        elif self.name == "custom":
+            self._cent_offsets = self._load_custom()
+
+    @staticmethod
+    def _just_cents() -> List[float]:
+        """Convert just-intonation ratios to cent deviations from 12-TET."""
+        cents = []
+        for i, ratio in enumerate(_JUST_RATIOS):
+            just_cents = 1200.0 * math.log2(ratio)
+            equal_cents = i * 100.0
+            cents.append(just_cents - equal_cents)
+        return cents
+
+    def _load_custom(self) -> List[float]:
+        """Load cent offsets from the custom temperament JSON file."""
+        path = self._custom_path
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"Custom temperament file not found: {path}\n"
+                f"Create one from the template with Temperament.write_custom_template()")
+        with open(path, "r") as f:
+            data = json.load(f)
+        # Allow the custom file to override the reference frequency
+        if "reference_freq" in data:
+            self.reference_freq = float(data["reference_freq"])
+        offsets = data.get("cent_offsets", {})
+        result = [0.0] * 12
+        for i, name in enumerate(NOTE_NAMES):
+            result[i] = float(offsets.get(name, 0.0))
+        return result
+
+    def frequency(self, midi_note: int) -> float:
+        """
+        Return the frequency in Hz for a MIDI note number.
+
+        Args:
+            midi_note: MIDI note 0-127.
+
+        Returns:
+            Frequency in Hz.
+        """
+        pitch_class = midi_note % 12
+        # 12-TET frequency, then apply temperament cent offset
+        equal_freq = self.reference_freq * (2.0 ** ((midi_note - _A4_MIDI) / 12.0))
+        cent_offset = self._cent_offsets[pitch_class]
+        return equal_freq * (2.0 ** (cent_offset / 1200.0))
+
+    def note_display(self, midi_note: int) -> str:
+        """
+        Return a human-readable string like ``"A4, 440.00Hz"``.
+
+        Args:
+            midi_note: MIDI note 0-127.
+
+        Returns:
+            String in the format ``"<name><octave>, <freq>Hz"``.
+        """
+        name = NOTE_NAMES[midi_note % 12]
+        octave = (midi_note // 12) - 1
+        freq = self.frequency(midi_note)
+        return f"{name}{octave}, {freq:.2f}Hz"
+
+    @staticmethod
+    def write_custom_template(path: Optional[str] = None) -> str:
+        """
+        Write a template ``custom_temperament.json`` file.
+
+        The file contains cent offsets for each pitch class (deviation from
+        12-TET).  Edit the values to create your own temperament.
+
+        Args:
+            path: Output file path.  Defaults to ``custom_temperament.json``
+                  beside this script.
+
+        Returns:
+            The path that was written.
+        """
+        path = path or _CUSTOM_TEMPERAMENT_PATH
+        template = {
+            "_comment": (
+                "Custom temperament definition. "
+                "Each value is a cent offset from 12-tone equal temperament. "
+                "Positive values sharpen the note; negative values flatten it. "
+                "A4 reference frequency can also be changed."
+            ),
+            "reference_freq": 440.0,
+            "cent_offsets": {name: 0.0 for name in NOTE_NAMES},
+        }
+        with open(path, "w") as f:
+            json.dump(template, f, indent=4)
+        return path
+
+    def __repr__(self) -> str:
+        return f"Temperament({self.name!r}, reference_freq={self.reference_freq})"
+
+
+# Default temperament instance (12-TET)
+DEFAULT_TEMPERAMENT = Temperament("equal")
 
 
 # ---------------------------------------------------------------------------
 # Scale editor — Launchpad95 scale/key/mode UI emulation
 # ---------------------------------------------------------------------------
 
-# Chromatic note names (index 0 = C)
-_SE_KEY_NAMES: List[str] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
-]
+# Legacy alias kept for internal use by the scale editor
+_SE_KEY_NAMES = NOTE_NAMES
 
 # Circle of fifths: step by a perfect fifth (7 semitones) each time
 _SE_CIRCLE_OF_FIFTHS: List[int] = [7 * k % 12 for k in range(12)]
@@ -402,6 +611,18 @@ SCALE_MODES: List[Tuple[str, List[int]]] = [
     ("Harmonic Minor",    [0, 2, 3, 5, 7, 8, 11]),                      # 13
     ("Melodic Minor",     [0, 2, 3, 5, 7, 9, 11]),                      # 14
     ("Chromatic",         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),     # 15
+    # --- Row 6 (pad positions (6,0)–(6,7)) ---
+    ("Bhairav",           [0, 1, 4, 5, 7, 8, 11]),                    # 16
+    ("Hunga. Minor",      [0, 2, 3, 6, 7, 8, 11]),                    # 17  Hungarian Minor
+    ("Minor Gypsy",       [0, 1, 4, 5, 7, 8, 10]),                    # 18
+    ("Hirojoshi",         [0, 2, 3, 7, 8]),                            # 19
+    ("In-Sen",            [0, 1, 5, 7, 10]),                           # 20
+    ("Iwato",             [0, 1, 5, 6, 10]),                           # 21
+    ("Kumoi",             [0, 2, 3, 7, 9]),                            # 22
+    ("Pelog",             [0, 1, 3, 7, 8]),                            # 23
+    # --- Row 7 (pad positions (7,0)–(7,1)) ---
+    ("Spanish",           [0, 1, 3, 4, 5, 7, 8, 10]),                 # 24  Spanish Phrygian / Jewish
+    ("IonEol",            [0, 2, 4, 5, 7, 8, 9, 11]),                 # 25  Ionian / Aeolian mixed
 ]
 
 
@@ -1506,6 +1727,7 @@ def _run_demo() -> None:
         )
 
     editor = ScaleEditorMode(key=0, octave=3, modus=0)
+    tuning = [DEFAULT_TEMPERAMENT]  # mutable cell for active temperament
     mode   = ["editor"]   # mutable cell: "editor" | "instrument"
 
     def show_editor() -> None:
@@ -1525,9 +1747,16 @@ def _run_demo() -> None:
             in_scale_color=scale_c,
             off_color=off_c,
         )
+        # Light top-row controls: octave dn/up, fifths left/right
+        if lp.model == HardwareModel.MK1:
+            ctrl_c = Mk1Color.GREEN
+        else:
+            ctrl_c = Mk2Color.ORANGE
+        for c_col in range(4):
+            lp.set_led(-1, c_col, ctrl_c)
         print(f"\n[Instrument]  {editor.key_name} {editor.scale_name}"
               f"  oct={editor.octave}  layout={editor.mode}")
-        print("  Press pads to see notes.  Top-right automap button → scale editor")
+        print("  Top buttons: [oct-][oct+][5th-L][5th-R]  ...  [editor]")
 
     def on_press(row: int, col: int) -> None:
         # Top-right automap button toggles between editor and instrument
@@ -1545,11 +1774,28 @@ def _run_demo() -> None:
                       f"  oct={editor.octave}  layout={editor.mode}")
 
         elif mode[0] == "instrument":
+            # Top-row controls in instrument mode
+            if row == -1:
+                if col == 0:
+                    editor.octave_up()
+                elif col == 1:
+                    editor.octave_down()
+                elif col == 2:
+                    editor.shift_fifth_down()
+                elif col == 3:
+                    editor.shift_fifth_up()
+                else:
+                    return
+                print(f"  {editor.key_name} {editor.scale_name}"
+                      f"  oct={editor.octave}")
+                return
+
             if 0 <= row <= 7 and col < 8:
-                info = editor.get_scale_grid().note_at(row, col)
+                info = editor.get_scale_grid().note_at(row, col, tuning=tuning[0])
                 if info.valid:
-                    name = _SE_KEY_NAMES[info.note % 12]
-                    print(f"  Pad ({row},{col}) → MIDI {info.note} ({name})")
+                    name = NOTE_NAMES[info.note % 12]
+                    octave = (info.note // 12) - 1
+                    print(f"  Pad ({row},{col}) → MIDI {info.note} ({name}{octave}, {info.hz:.2f}Hz)")
                 lp.set_led(row, col, press_c)
 
     def on_release(row: int, col: int) -> None:
