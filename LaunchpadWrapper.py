@@ -233,6 +233,7 @@ class NoteInfo:
     is_root:      bool
     is_highlight: bool
     valid:        bool
+    hz:           Optional[float] = None
 
 
 class ScaleGrid:
@@ -328,13 +329,16 @@ class ScaleGrid:
                     result.append(n)
         return result
 
-    def note_at(self, row: int, col: int) -> NoteInfo:
+    def note_at(self, row: int, col: int,
+                tuning: Optional["Temperament"] = None) -> NoteInfo:
         """
         Return the ``NoteInfo`` for pad at ``(row, col)``.
 
         Args:
-            row: Pad row 0 (top) to 7 (bottom).
-            col: Pad column 0 (left) to 7 (right).
+            row:    Pad row 0 (top) to 7 (bottom).
+            col:    Pad column 0 (left) to 7 (right).
+            tuning: Optional :class:`Temperament` instance.  When provided,
+                    ``NoteInfo.hz`` is set to the note's frequency.
 
         Returns:
             ``NoteInfo`` describing the MIDI note and its scale membership.
@@ -351,12 +355,15 @@ class ScaleGrid:
         is_root = valid and (note % 12 == self._root % 12)
         is_in_scale = valid  # by construction all notes in grid are in-scale
         is_highlight = (self._highlight is not None and degree == self._highlight)
+        midi = note if valid else -1
+        hz = tuning.frequency(midi) if (tuning is not None and valid) else None
         return NoteInfo(
-            note=note if valid else -1,
+            note=midi,
             in_scale=is_in_scale,
             is_root=is_root,
             is_highlight=is_highlight,
             valid=valid,
+            hz=hz,
         )
 
 
@@ -1784,10 +1791,11 @@ def _run_demo() -> None:
                 return
 
             if 0 <= row <= 7 and col < 8:
-                info = editor.get_scale_grid().note_at(row, col)
+                info = editor.get_scale_grid().note_at(row, col, tuning=tuning[0])
                 if info.valid:
-                    display = tuning[0].note_display(info.note)
-                    print(f"  Pad ({row},{col}) → MIDI {info.note} ({display})")
+                    name = NOTE_NAMES[info.note % 12]
+                    octave = (info.note // 12) - 1
+                    print(f"  Pad ({row},{col}) → MIDI {info.note} ({name}{octave}, {info.hz:.2f}Hz)")
                 lp.set_led(row, col, press_c)
 
     def on_release(row: int, col: int) -> None:
