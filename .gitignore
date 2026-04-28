@@ -1,2 +1,18 @@
 __pycache__
 .DS_Store
+
+# Created by venv; see https://docs.python.org/3/library/venv.html
+Scripts/
+Lib/
+share/
+Include/
+__pycache__/
+pyvenv.cfg
+.claude/
+.env
+.venv
+
+# Python build artefacts
+build/
+dist/
+*.egg-info/
