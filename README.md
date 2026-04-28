@@ -19,12 +19,53 @@ Hardware is detected automatically at startup via a SysEx challenge/response seq
 
 ## Installation
 
+The repository follows a `src/`-layout Python package.  The folder Ableton needs is **`src/Launchpad95/`** — *not* the top-level repository folder.
+
+### As an Ableton Remote Script
+
 1. Locate your Ableton Live Remote Scripts folder:
    - **Windows**: `C:\ProgramData\Ableton\Live <version>\Resources\MIDI Remote Scripts\`
    - **macOS**: `/Applications/Ableton Live <version>.app/Contents/App-Resources/MIDI Remote Scripts/`
-2. Copy the `Launchpad95` folder into that directory.
+2. Copy the inner `src/Launchpad95/` folder (the one containing `__init__.py`, `Launchpad.py`, etc.) into that directory.  After copying, the path on disk should be `…/MIDI Remote Scripts/Launchpad95/__init__.py`.
 3. Restart Ableton Live.
 4. Open **Preferences → Link / MIDI** and set your Launchpad input and output ports to use **Launchpad95** as the Control Surface.
+
+> Do **not** copy the repository root (the folder that contains `pyproject.toml`, `src/`, `README.md`, …).  Live discovers Remote Scripts by folder name, so the directory inside `MIDI Remote Scripts` must literally be named `Launchpad95` and contain `__init__.py` at its top level.
+
+### As a pip-installable Python package
+
+The repository is also a standard PEP 621 Python package.  Installing it with pip exposes the standalone `LaunchpadWrapper` (see [Standalone Python Wrapper](#standalone-python-wrapper) below) without needing Ableton Live.
+
+```bash
+# From a clone of the repo
+pip install .
+
+# Or in editable / development mode
+pip install -e .
+
+# Or directly from a local path
+pip install /path/to/Launchpad95
+```
+
+This installs the `Launchpad95` package and the `launchpad95-demo` console script, and pulls in `mido` + `python-rtmidi` for raw MIDI I/O.  The Ableton Remote Script side of the package is gracefully skipped when `_Framework` is unavailable (i.e. outside of Live).
+
+### Repository layout
+
+```
+Launchpad95/
+├── pyproject.toml            ← packaging metadata (PEP 621)
+├── README.md
+├── LICENSE
+├── M4LDevice/                ← Max for Live OSD device (.amxd)
+├── web/                      ← documentation assets, screenshots
+└── src/
+    └── Launchpad95/          ← the importable Python package
+        ├── __init__.py       ← `create_instance` / `get_capabilities` for Live
+        ├── Launchpad.py
+        ├── LaunchpadWrapper.py
+        ├── …all components, skins, colour palettes…
+        └── custom_temperament.json
+```
 
 ---
 
@@ -173,6 +214,141 @@ Global action buttons (top row):
 - **Unmute all**: Unmute all tracks
 
 Default-value buttons: Each strip has a reset button that returns the parameter to its default value.  The button is lit when the parameter is already at default.
+
+---
+
+## Standalone Python Wrapper
+
+`LaunchpadWrapper` is a self-contained Python class that talks to any Launchpad MK1, Mini, S, MK2, Mini MK3, or X over MIDI **without Ableton Live**.  Use it for custom controllers, lighting demos, MIDI-driven visualisations, scale-aware controller layouts, prototyping, or any project that just wants to drive the LEDs and read the pads.
+
+It provides hardware auto-detection, a unified API across all four hardware generations (with the right SysEx/CC/note quirks abstracted), high-level helpers for scale grids and bar-graph mixers, and a callback-based event loop.
+
+### Requirements
+
+- Python 3.7+
+- `mido` and `python-rtmidi` (installed automatically by `pip install Launchpad95`)
+- A connected Launchpad — the wrapper auto-detects via MIDI port name.
+
+### Quick start
+
+```python
+from Launchpad95 import LaunchpadWrapper
+from Launchpad95.LaunchpadWrapper import Mk2Color, ScaleGrid
+
+lp = LaunchpadWrapper.connect()       # auto-detects connected Launchpad
+print(f"Connected: {lp.model}")        # 'mk1', 'mk2', 'mk3', or 'lpx'
+
+lp.set_led(0, 0, Mk2Color.RED)         # top-left pad → red
+lp.blink(0, 1, Mk2Color.GREEN)         # blink (MK2/MK3/LPX only)
+lp.pulse(0, 2, Mk2Color.BLUE)          # pulse / breathe
+
+lp.on_button_press(lambda r, c: print(f"Pressed ({r},{c})"))
+lp.run()                                # blocking MIDI loop; Ctrl+C to stop
+lp.disconnect()
+```
+
+### Run the bundled demo
+
+After `pip install`, the package exposes a console script that runs an interactive scale-editor + instrument demo on real hardware:
+
+```bash
+launchpad95-demo
+```
+
+Equivalent to:
+
+```bash
+python -m Launchpad95.LaunchpadWrapper
+```
+
+The demo opens with the Launchpad95 scale editor on the 8×8 grid; pick a root, mode, and octave with the pads, then press the top-right automap button to switch into instrument mode.  The console prints the MIDI note (and frequency, via the active temperament) for each pad you press.
+
+### API reference
+
+#### Connection and lifecycle
+
+| Method | Purpose |
+|---|---|
+| `LaunchpadWrapper.connect(model=None, input_port=None, output_port=None)` | Auto-detect hardware by scanning MIDI port names; returns a ready instance.  Pass an explicit `model` (`HardwareModel.MK1` / `MK2` / `MK3` / `LPX`) and port names to override detection. |
+| `lp.run(blocking=True)` | Start the MIDI listen loop.  `blocking=False` runs it in a background thread so the calling code can keep working. |
+| `lp.disconnect()` | Exit programmer mode, clear all LEDs, and close the MIDI ports. |
+
+#### LED control
+
+| Method | Purpose |
+|---|---|
+| `set_led(row, col, color)` | Set a single pad to a static colour.  `row=-1` addresses the top row of round buttons; `col=8` addresses the right-side column. |
+| `blink(row, col, color)` | Blinking pad (MK2 / MK3 / LPX). |
+| `pulse(row, col, color)` | Pulsing/breathing pad (MK2 / MK3 / LPX). |
+| `set_row(row, colors)` | Set a whole row from an 8- or 9-element colour list. |
+| `set_grid(colors)` | Set the entire 8×8 grid from a 2-D list. |
+| `clear()` | Turn off every LED. |
+
+Colour values come from `Mk1Color` (2-bit, used on MK1/Mini/S) or `Mk2Color` (8-bit palette index, used on MK2/MK3/LPX).  The wrapper does **not** translate between the two — pick the palette that matches `lp.model`.
+
+#### Higher-level drawing
+
+| Method | Purpose |
+|---|---|
+| `color_scale_grid(grid, root_color=…, in_scale_color=…, off_color=…)` | Render a `ScaleGrid` onto the 8×8 matrix, lighting root notes / scale tones / out-of-scale pads in distinct colours. |
+| `draw_bar(col, value, min_val=0.0, max_val=1.0, color_on=…, color_off=…)` | Vertical bar graph in one column.  The bar fills from the bottom row upward. |
+| `draw_mixer(values, min_val=0.0, max_val=1.0, color_on=…, color_off=…)` | 8-column mixer view; pass a length-8 list of values in `[min_val, max_val]`. |
+
+#### Input callbacks
+
+| Method | Purpose |
+|---|---|
+| `on_button_press(cb)` / `on_button_release(cb)` | Register a callback invoked for *any* pad/button press or release.  Signature: `cb(row, col)`. |
+| `on_pad_press(row, col, cb)` / `on_pad_release(row, col, cb)` | Register a callback for one specific pad/button. |
+| `clear_callbacks()` | Remove all registered callbacks. |
+
+#### Scale-aware layouts
+
+```python
+from Launchpad95.LaunchpadWrapper import ScaleGrid, Mk2Color
+
+grid = ScaleGrid(scale_name="Major", root=0, octave=4)   # C major @ middle C
+lp.color_scale_grid(grid,
+                    root_color=Mk2Color.BLUE,
+                    in_scale_color=Mk2Color.LIGHT_BLUE,
+                    off_color=Mk2Color.OFF)
+
+# What MIDI note does a pad map to?
+info = grid.note_at(row=3, col=5)
+print(info.note, info.in_scale, info.is_root)
+```
+
+`ScaleGrid` ports the diatonic horizontal layout used by `InstrumentControllerComponent` inside Live.  Built-in scales include Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Pentatonics, Blues, Whole Tone, Harmonic/Melodic Minor, and Chromatic — full list in `Launchpad95.LaunchpadWrapper.BUILTIN_SCALES`.
+
+#### Mixer / bar-graph display
+
+```python
+import math, time
+
+while True:
+    t = time.time()
+    values = [0.5 + 0.5 * math.sin(t + i * 0.5) for i in range(8)]
+    lp.draw_mixer(values, color_on=Mk2Color.AMBER)
+    time.sleep(1 / 30)
+```
+
+Combine with `lp.run(blocking=False)` to drive animated displays while still receiving pad-press callbacks.
+
+#### Embedded scale editor
+
+The full Launchpad95 scale editor (key, mode, octave, layout, circle of fifths) is also available as a reusable component:
+
+```python
+from Launchpad95.LaunchpadWrapper import LaunchpadWrapper, ScaleEditorMode
+
+lp = LaunchpadWrapper.connect()
+editor = ScaleEditorMode(key=0, octave=3, modus=0)
+lp.run_scale_editor(editor)            # blocking; pads drive the editor UI
+print(editor.scale_name, editor.key_name, editor.octave)
+grid = editor.get_scale_grid()         # current scale → ScaleGrid
+```
+
+See the `_run_demo()` source in `LaunchpadWrapper.py` for a complete two-phase example that combines the scale editor with an instrument-mode play surface.
 
 ---
 

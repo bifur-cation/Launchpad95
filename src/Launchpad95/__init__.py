@@ -13,13 +13,26 @@ Supported hardware (via vendor_id 4661 / Novation):
   - Launchpad X  (product ID 259)
 """
 
-from _Framework.Capabilities import (
-    CONTROLLER_ID_KEY, PORTS_KEY,
-    NOTES_CC, SCRIPT, SYNC, REMOTE,
-    controller_id, inport, outport
-)
-from .Launchpad import Launchpad
-from .LaunchpadWrapper import LaunchpadWrapper
+# `_Framework` is only available when the package is loaded inside Ableton
+# Live's bundled Python.  When pip-installed (e.g. for the standalone wrapper),
+# the Live-side imports are skipped so `import Launchpad95` still works.
+try:
+    from _Framework.Capabilities import (
+        CONTROLLER_ID_KEY, PORTS_KEY,
+        NOTES_CC, SCRIPT, SYNC, REMOTE,
+        controller_id, inport, outport
+    )
+    from .Launchpad import Launchpad
+    _LIVE_AVAILABLE = True
+except ImportError:
+    _LIVE_AVAILABLE = False
+
+# `LaunchpadWrapper` requires `mido` / `python-rtmidi`, which aren't installed
+# in Live's embedded interpreter.
+try:
+    from .LaunchpadWrapper import LaunchpadWrapper
+except ImportError:
+    LaunchpadWrapper = None
 
 def create_instance(c_instance):
     """

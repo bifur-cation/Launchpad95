@@ -6,3 +6,8 @@ Include/
 __pycache__/
 pyvenv.cfg
 .claude/
+
+# Python build artefacts
+build/
+dist/
+*.egg-info/
