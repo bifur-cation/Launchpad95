@@ -8,6 +8,8 @@ Include/
 __pycache__/
 pyvenv.cfg
 .claude/
+.env
+.venv
 
 # Python build artefacts
 build/
